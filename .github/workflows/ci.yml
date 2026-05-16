@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test (real Chromium)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Chromium
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build UI
+        run: ./scripts/build-ui.sh
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+        env:
+          CHROME: /usr/bin/chromium
+
+      - name: Injection grep gate
+        # The agent must never reach Runtime.evaluate(expression) with
+        # operator-supplied content. The helper bootstrap is the only
+        # allowlisted callsite.
+        run: |
+          set -e
+          out=$(grep -RE "Runtime\.evaluate|expression\s*:" crates/daemon/src || true)
+          # We deliberately use Runtime::evaluate in injected.rs to load the
+          # fixed helper, but only with a constant-string. Anything outside
+          # crates/daemon/src/browser/injected.rs is a regression.
+          violations=$(printf "%s\n" "$out" | grep -v 'crates/daemon/src/browser/injected.rs' || true)
+          if [ -n "$violations" ]; then
+            echo "Forbidden Runtime.evaluate usage outside helper bootstrap:"
+            echo "$violations"
+            exit 1
+          fi
+
+  docker-build:
+    name: Docker buildx (amd64 + arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          tags: access-control-browser:ci

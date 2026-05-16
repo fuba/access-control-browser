@@ -1,0 +1,30 @@
+# access-control-browser — dev/runtime compose file.
+# Per CLAUDE.md: no `version:` key; uses the modern compose schema.
+
+services:
+  acb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: access-control-browser:dev
+    container_name: acb
+    init: true
+    ports:
+      - "39100:39100"
+    volumes:
+      # Host-edits to config.yaml are picked up by the daemon's notify
+      # watcher (or its poll fallback when host is macOS).
+      - ./config.yaml:/app/config.yaml:ro
+      - ./logs:/app/logs
+      - acb-profile:/app/var/profile
+    environment:
+      RUST_LOG: "info,acb_daemon=debug"
+      ACB_BIND: "0.0.0.0"
+      ACB_PORT: "39100"
+      ACB_HEADLESS: "true"
+    # Chromium runs with --no-sandbox; the container is the security
+    # boundary. Do not grant SYS_ADMIN.
+    restart: unless-stopped
+
+volumes:
+  acb-profile:

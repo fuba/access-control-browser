@@ -1,0 +1,11 @@
+target/
+ui/node_modules/
+ui/.next/
+ui/out/
+crates/injected-js/node_modules/
+.git/
+.github/
+logs/
+var/
+*.log
+.DS_Store
