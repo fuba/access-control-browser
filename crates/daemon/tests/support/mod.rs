@@ -1,5 +1,9 @@
 // Shared integration-test scaffolding. Spawns a real daemon (with a real
 // Chromium) on a random port and exposes a small async client.
+//
+// Some helpers are used by only a subset of the test files; tagged with
+// allow(dead_code) so they don't warn during partial test runs.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -8,6 +8,7 @@ pub mod events;
 pub mod reload;
 pub mod snapshot;
 pub mod state;
+pub mod ui_static;
 
 pub mod api {
     pub mod actions;

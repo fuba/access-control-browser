@@ -52,7 +52,27 @@ pub async fn require_bearer(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .unwrap_or("");
-    let token = header.strip_prefix("Bearer ").unwrap_or("");
+    let header_token = header.strip_prefix("Bearer ").unwrap_or("");
+    // Fallback: `?token=...` query parameter. Needed because `EventSource`
+    // cannot send custom headers. Logged at the daemon's HTTP layer, so
+    // operators with strict logging concerns should prefer the header on
+    // non-SSE endpoints.
+    let q_token = req
+        .uri()
+        .query()
+        .map(|q| {
+            url::form_urlencoded::parse(q.as_bytes())
+                .filter(|(k, _)| k == "token")
+                .map(|(_, v)| v.into_owned())
+                .next()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    let token = if !header_token.is_empty() {
+        header_token.to_string()
+    } else {
+        q_token
+    };
     if token.is_empty() || !constant_time_eq(token.as_bytes(), state.token().as_bytes()) {
         return Err(StatusCode::UNAUTHORIZED);
     }

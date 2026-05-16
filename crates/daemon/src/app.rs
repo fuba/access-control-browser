@@ -34,6 +34,9 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz::handler))
         .merge(protected)
+        // UI is unauthenticated (static asset). The page itself reads the
+        // token from `?token=` and adds it to its API calls.
+        .fallback(get(crate::ui_static::any_path))
         // Defense-in-depth: clamp framing and referrers on every response.
         .layer(SetResponseHeaderLayer::if_not_present(
             axum::http::header::HeaderName::from_static("x-frame-options"),
