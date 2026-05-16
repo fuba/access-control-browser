@@ -1,5 +1,5 @@
 // A Session = one chromiumoxide Page plus all the state the daemon tracks
-// for it. M2 only needs current_url tracking and the Fetch event task.
+// for it.
 
 use std::sync::Arc;
 
@@ -7,12 +7,16 @@ use chromiumoxide::Page;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
+use crate::snapshot::ref_table::RefTable;
+
 pub struct Session {
     pub id: String,
     pub page: Page,
     /// Top-level page URL, updated on `Page.frameNavigated`. Used by the
     /// request interceptor to apply the inherit-page subresource rule.
     pub current_url: RwLock<Option<String>>,
+    /// @eN ref allocator and stale-generation tracker.
+    pub ref_table: RefTable,
     /// Background tasks (Fetch interceptor, frame tracker). Kept here so
     /// dropping the session aborts them.
     pub _tasks: RwLock<Vec<JoinHandle<()>>>,
@@ -24,6 +28,7 @@ impl Session {
             id,
             page,
             current_url: RwLock::new(None),
+            ref_table: RefTable::new(),
             _tasks: RwLock::new(Vec::new()),
         })
     }

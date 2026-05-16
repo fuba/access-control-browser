@@ -34,6 +34,9 @@ pub async fn create(
     interceptor::install(session.clone(), state.clone())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("install: {e}")))?;
+    crate::browser::injected::install_auto_inject(&session.page)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("inject: {e}")))?;
     state.put_session(id.clone(), session).await;
     let _ = state.events().send(ActivityEvent::SessionOpened {
         ts: now_unix(),

@@ -16,6 +16,7 @@ pub struct ConfigSummary {
     rules: Vec<RuleSummary>,
     always_block_schemes: Vec<String>,
     subresources_inherit_page: bool,
+    helper_sha256: &'static str,
 }
 
 #[derive(Serialize)]
@@ -45,5 +46,6 @@ pub async fn handler(State(state): State<AppState>) -> Json<ConfigSummary> {
         rules,
         always_block_schemes: p.resource_policy.always_block_schemes.clone(),
         subresources_inherit_page: p.resource_policy.subresources_inherit_page,
+        helper_sha256: crate::browser::injected::helper_sha256(),
     })
 }
