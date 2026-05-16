@@ -1,0 +1,49 @@
+[package]
+name = "acb-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Access-controlled browser daemon: chromiumoxide + axum + policy enforcement"
+
+[lib]
+name = "acb_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "acb-daemon"
+path = "src/main.rs"
+
+[dependencies]
+acb-policy = { path = "../policy" }
+
+# Workspace deps
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+futures = { workspace = true }
+chromiumoxide = { workspace = true }
+arc-swap = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+sha2 = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+async-trait = "0.1"
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = "3"
+pretty_assertions = "1"

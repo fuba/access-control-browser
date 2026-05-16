@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/policy",
     "crates/cli",
+    "crates/daemon",
 ]
 
 [workspace.package]
@@ -32,6 +33,27 @@ clap = { version = "4.5", features = ["derive", "env"] }
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+
+# Async / HTTP / WS / SSE
+tokio = { version = "1.40", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["set-header"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# CDP
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+
+# Misc daemon utilities
+arc-swap = "1.7"
+rand = "0.8"
+base64 = "0.22"
+sha2 = "0.10"
+notify = "6.1"
+notify-debouncer-full = "0.3"
 
 [profile.release]
 lto = "thin"
