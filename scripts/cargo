@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Wrapper that pins the project's Rust toolchain via ~/.cargo/bin.
+# Use as ./scripts/cargo build / test / etc.
+set -euo pipefail
+exec "${HOME}/.cargo/bin/cargo" "$@"
