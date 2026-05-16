@@ -11,7 +11,11 @@ dependencies = [
  "assert_cmd",
  "clap",
  "predicates",
+ "reqwest",
+ "serde",
+ "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
  "tracing-subscriber",
 ]

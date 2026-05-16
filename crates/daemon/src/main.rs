@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
     let token = acb_daemon::auth::generate_token();
 
     let user_data_dir = Some(PathBuf::from(&policy.chromium.user_data_dir));
+    let poll_ms = policy.server.config_poll_ms;
     let running = acb_daemon::start(acb_daemon::StartConfig {
         bind: addr,
         policy,
@@ -99,6 +100,9 @@ async fn main() -> Result<()> {
         user_data_dir,
     })
     .await?;
+    running.state.set_policy_path(cli.config.clone()).await;
+
+    let _reload_handle = acb_daemon::reload::spawn(cli.config.clone(), poll_ms, running.state.clone());
 
     tracing::info!(addr = %running.addr, token_file = %token_path.display(), "acb-daemon listening");
 

@@ -5,11 +5,13 @@ pub mod app;
 pub mod auth;
 pub mod browser;
 pub mod events;
+pub mod reload;
 pub mod snapshot;
 pub mod state;
 
 pub mod api {
     pub mod actions;
+    pub mod admin;
     pub mod config_route;
     pub mod healthz;
     pub mod nav;

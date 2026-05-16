@@ -6,6 +6,7 @@
 //   - a broadcast channel for the activity feed (SSE consumers in M2+)
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -24,6 +25,7 @@ pub struct AppState {
 
 struct Inner {
     pub policy: ArcSwap<CompiledPolicy>,
+    pub policy_path: RwLock<Option<PathBuf>>,
     pub token: String,
     pub browser: RwLock<Option<BrowserHandle>>,
     pub sessions: RwLock<HashMap<String, Arc<Session>>>,
@@ -36,12 +38,21 @@ impl AppState {
         Self {
             inner: Arc::new(Inner {
                 policy: ArcSwap::new(policy),
+                policy_path: RwLock::new(None),
                 token,
                 browser: RwLock::new(None),
                 sessions: RwLock::new(HashMap::new()),
                 events: tx,
             }),
         }
+    }
+
+    pub async fn set_policy_path(&self, p: PathBuf) {
+        *self.inner.policy_path.write().await = Some(p);
+    }
+
+    pub fn policy_path(&self) -> Option<PathBuf> {
+        self.inner.policy_path.try_read().ok().and_then(|g| g.clone())
     }
 
     pub fn policy(&self) -> Arc<CompiledPolicy> {

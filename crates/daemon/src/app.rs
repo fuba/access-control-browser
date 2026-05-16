@@ -4,7 +4,7 @@
 use axum::{middleware, routing::*, Router};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::api::{actions, config_route, healthz, nav, sessions, sse};
+use crate::api::{actions, admin, config_route, healthz, nav, sessions, sse};
 use crate::auth;
 use crate::AppState;
 
@@ -25,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .route("/sessions/:id/check", post(actions::check))
         .route("/sessions/:id/find", post(actions::find))
         .route("/events", get(sse::handler))
+        .route("/admin/reload", post(admin::reload))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
