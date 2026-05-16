@@ -1,0 +1,24 @@
+# Rust
+/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node / Next.js
+/ui/node_modules
+/ui/.next
+/ui/out
+/crates/injected-js/node_modules
+
+# Logs and runtime
+/logs
+/var
+*.log
+
+# Local config (commit only the example)
+/config.yaml
+
+# IDE / OS
+.DS_Store
+.idea
+.vscode
+*.swp
