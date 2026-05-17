@@ -36,7 +36,9 @@ docker exec acb acb-cli open https://github.com/   # from the CLI
 
 ## Status
 
-v0.2.x. The daemon, CLI, UI, and policy are working end-to-end. Live viewport (CDP screencast) and Windows-native `.exe` are deferred to v0.3.
+v0.2.x. Daemon, CLI, UI, policy, and a live viewport with operator
+mouse + keyboard + Japanese IME input are working end-to-end.
+Windows-native `.exe` is deferred to v0.3.
 
 ## License
 

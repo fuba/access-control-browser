@@ -46,7 +46,11 @@ pub async fn launch(
     for a in args {
         builder = builder.arg(a);
     }
-    if !headless {
+    if headless {
+        // "New" headless is the modern compositor-backed mode and is the
+        // only one with reliable Page.startScreencast in recent Chromium.
+        builder = builder.new_headless_mode();
+    } else {
         builder = builder.with_head();
     }
     builder = builder.request_timeout(Duration::from_secs(30));

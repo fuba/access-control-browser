@@ -20,7 +20,10 @@ Required files no matter the OS:
 
 Once running, three things are useful to know:
 
-- **UI**: `http://127.0.0.1:39100/?token=<token>`
+- **UI**: `http://127.0.0.1:39100/?token=<token>`. The live viewport
+  panel shows the page as Chromium renders it; click and type to drive
+  the browser (Japanese IME works — `compositionupdate`/`end` events
+  are forwarded as CDP `Input.imeSetComposition`/`Input.insertText`).
 - **Token file** (the daemon writes it on startup):
   - Linux: `${XDG_RUNTIME_DIR}/access-control-browser.token` or
     `/tmp/access-control-browser.token`

@@ -6,6 +6,7 @@ import {
   ValidateResult,
   validateUrl,
 } from "../lib/url-validator";
+import { Viewport } from "../components/Viewport";
 
 type SnapshotItem = {
   ref: string;
@@ -181,20 +182,22 @@ export default function Home() {
       </div>
       <div className="body">
         <div className="viewport">
-          <div className="placeholder">
-            <p>Live viewport (Page.startScreencast) — planned for v0.2.</p>
-            <p>
-              For v0.1 the operator drives the browser via this UI and the
-              CLI; the page renders headless inside the daemon. Use Snapshot
-              to inspect what the agent sees.
-            </p>
-            {cfg && (
+          {sessionId ? (
+            <Viewport sessionId={sessionId} token={token} />
+          ) : (
+            <div className="placeholder">
               <p>
-                helper sha256:{" "}
-                <code style={{ fontSize: 11 }}>{cfg.helper_sha256}</code>
+                Type an allowed URL and press <kbd>Enter</kbd>. The live
+                viewport will appear here once a session is open.
               </p>
-            )}
-          </div>
+              {cfg && (
+                <p>
+                  helper sha256:{" "}
+                  <code style={{ fontSize: 11 }}>{cfg.helper_sha256}</code>
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <div className="side">
           <div className="panel">

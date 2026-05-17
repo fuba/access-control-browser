@@ -19,11 +19,33 @@ POST   /sessions/:id/hover   {ref}
 POST   /sessions/:id/select  {ref,value}
 POST   /sessions/:id/check   {ref,checked}
 POST   /sessions/:id/find    {kind: role|text, query}
+GET    /sessions/:id/viewport            WS: live viewport + operator input
 GET    /events                           SSE activity feed (auth via ?token)
 POST   /admin/reload                     manual policy reload
 GET    /                                 embedded Next.js UI
 GET    /*                                static UI assets
 ```
+
+## `/sessions/:id/viewport` WS
+
+Bidirectional. Server → client is binary JPEG frames (lazy-started at
+~6 fps via `Page.captureScreenshot`; cached most-recent frame is sent on
+connect so a fresh subscriber sees something immediately). Client →
+server is JSON with `kind`:
+
+| `kind` | fields |
+|---|---|
+| `mouse` | `type` (`down`/`up`/`move`/`wheel`), `x`, `y`, optional `button` (`left`/`middle`/`right`), `click_count`, `modifiers` |
+| `key` | `type` (`down`/`up`), `key`, `code`, optional `text`, `modifiers` |
+| `composition_start` | — |
+| `composition_update` | `text`, optional `selection_start`/`selection_end` |
+| `composition_end` | `text` (committed) |
+
+IME usage is the standard browser pattern: the UI listens to the page's
+own `compositionstart`/`update`/`end` events on an invisible textarea
+overlay and forwards them. The daemon translates each to
+`Input.imeSetComposition` / `Input.insertText`. Test:
+`crates/daemon/tests/viewport_input.rs::japanese_ime_inserts_text`.
 
 ## Status codes
 

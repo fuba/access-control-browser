@@ -18,6 +18,7 @@ pub mod api {
     pub mod nav;
     pub mod sessions;
     pub mod sse;
+    pub mod viewport;
 }
 
 use std::path::PathBuf;

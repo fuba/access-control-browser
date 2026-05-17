@@ -66,6 +66,12 @@ review.
 - Action handlers (`click`, `fill`, `type`, etc.) accept only `@eN` refs
   allocated by the most recent snapshot. A stale ref (different
   generation) returns `410 Gone`; an unknown ref returns `410` too.
+- **The live viewport path (`/sessions/:id/viewport` WS) is exempt from
+  the class restriction**: the human operator driving the UI is trusted
+  and the class system exists to constrain the LLM agent. URL allowlist
+  rules still bind every navigation, including those triggered by
+  operator clicks (they go through the Fetch interceptor). The
+  unrestricted input surface is documented at v0.2.
 
 ### 4. No agent-side code injection (req §5)
 
