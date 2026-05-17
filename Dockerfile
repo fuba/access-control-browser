@@ -45,10 +45,25 @@ RUN case "$TARGETPLATFORM" in \
 
 # ---------- Stage 3: Runtime (TARGETPLATFORM native) ------------------------
 FROM debian:bookworm-slim AS runtime
+# Multilingual font set:
+#   fonts-noto-core         Latin / Greek / Cyrillic core
+#   fonts-noto-cjk          Japanese / Chinese (Simplified+Traditional) / Korean
+#   fonts-noto-extra        Arabic / Hebrew / Devanagari / Thai / Tamil / Bengali / etc.
+#   fonts-noto-color-emoji  Emoji
+#   fonts-noto-mono         Monospace
+# Liberation kept for legacy Times / Arial / Courier substitution.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates fonts-liberation libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
+      ca-certificates \
+      fonts-liberation \
+      fonts-noto-core \
+      fonts-noto-cjk \
+      fonts-noto-extra \
+      fonts-noto-color-emoji \
+      fonts-noto-mono \
+      libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
       libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2 libpango-1.0-0 \
       libcairo2 libcups2 chromium tini \
+ && fc-cache -f \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -m -u 1000 acb
 WORKDIR /app
