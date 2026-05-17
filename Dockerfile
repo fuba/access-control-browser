@@ -1,11 +1,9 @@
 # Multi-stage build for the access-controlled browser. Targets
 # linux/amd64 and linux/arm64 via `docker buildx build --platform ...`.
 #
-# Stages:
-#   1. ui-build    — Next.js static export -> ui/out
-#   2. rust-build  — cargo build --release (runs natively on target arch
-#                    via buildx's QEMU emulation)
-#   3. runtime     — Debian bookworm-slim + chromium + tini, non-root user
+# Rust is cross-compiled with cargo-zigbuild on the BUILDPLATFORM so the
+# arm64 leg does not pay QEMU emulation cost. Without this, the arm64
+# build was taking ~1 hour on a 2-vCPU ubuntu-latest runner.
 
 # ---------- Stage 1: UI -----------------------------------------------------
 FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS ui-build
@@ -15,23 +13,37 @@ RUN npm ci
 COPY ui/ ./
 RUN npm run build
 
-# ---------- Stage 2: Rust ---------------------------------------------------
-FROM rust:1.95-slim-bookworm AS rust-build
+# ---------- Stage 2: Rust (cross-compiles on BUILDPLATFORM) -----------------
+FROM --platform=$BUILDPLATFORM rust:1.95-slim-bookworm AS rust-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      pkg-config libssl-dev ca-certificates \
+      pkg-config libssl-dev ca-certificates curl xz-utils python3 \
  && rm -rf /var/lib/apt/lists/*
+
+# zig provides a portable cross-linker that lets cargo-zigbuild target
+# foreign GNU triples without QEMU.
+RUN curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-$(uname -m)-0.13.0.tar.xz \
+      | tar -xJ -C /opt \
+ && ln -sf /opt/zig-linux-*-0.13.0/zig /usr/local/bin/zig
+RUN cargo install --locked cargo-zigbuild@0.20.0
+
 WORKDIR /src
-# Cache dependency builds via a dummy workspace first.
+ARG TARGETPLATFORM
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY --from=ui-build /ui/out ./ui/out
-COPY crates/injected-js ./crates/injected-js
-RUN cargo build --release --bin acb-daemon --bin acb-cli && \
-    mkdir -p /out && \
-    cp target/release/acb-daemon /out/ && \
-    cp target/release/acb-cli    /out/
 
-# ---------- Stage 3: Runtime ------------------------------------------------
+RUN case "$TARGETPLATFORM" in \
+      "linux/amd64") TRIPLE=x86_64-unknown-linux-gnu ;; \
+      "linux/arm64") TRIPLE=aarch64-unknown-linux-gnu ;; \
+      *) echo "unsupported TARGETPLATFORM: $TARGETPLATFORM" >&2 && exit 1 ;; \
+    esac \
+ && rustup target add "$TRIPLE" \
+ && cargo zigbuild --release --target "$TRIPLE" --bin acb-daemon --bin acb-cli \
+ && mkdir -p /out \
+ && cp "target/$TRIPLE/release/acb-daemon" /out/ \
+ && cp "target/$TRIPLE/release/acb-cli"    /out/
+
+# ---------- Stage 3: Runtime (TARGETPLATFORM native) ------------------------
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates fonts-liberation libnss3 libatk-bridge2.0-0 libdrm2 libxkbcommon0 \
