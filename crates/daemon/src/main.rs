@@ -48,8 +48,18 @@ async fn main() -> Result<()> {
 
     let yaml = std::fs::read_to_string(&cli.config)
         .with_context(|| format!("read config {}", cli.config.display()))?;
+    // Resolve config-internal relative paths against the config file's
+    // parent. This lets the operator place /etc/acb/config.yaml outside
+    // the daemon's CWD (e.g. outside an LLM-agent sandbox) and still use
+    // relative log_file / user_data_dir paths that land alongside the
+    // config rather than inside the agent's writable area.
+    let config_dir = cli
+        .config
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
     let policy = Arc::new(
-        acb_policy::load::load_policy(&yaml)
+        acb_policy::load::load_policy_with_base(&yaml, Some(&config_dir))
             .with_context(|| format!("invalid policy in {}", cli.config.display()))?,
     );
 

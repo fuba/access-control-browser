@@ -84,6 +84,29 @@ An empty `allowed_classes: []` means "the URL loads but nothing is
 interactable/readable by the agent" — a useful mode for read-only
 observation (the operator can still see the page in the UI).
 
+## Path resolution
+
+Relative paths in `server.log_file` and `chromium.user_data_dir`
+**resolve against the config file's parent directory**, not the
+daemon's CWD. This lets you place an entire daemon installation under
+a single directory that's outside any LLM agent's writable area:
+
+```
+/etc/access-control-browser/
+├── config.yaml          ← root-owned, read-only for the daemon user
+├── logs/                ← log_file: "./logs/access-control-browser.log"
+└── var/profile/         ← user_data_dir: "./var/profile"
+```
+
+Then start the daemon with `--config /etc/access-control-browser/config.yaml`
+from any working directory — the paths above always land inside
+`/etc/access-control-browser/`.
+
+Absolute paths (`/var/log/...`, `/srv/...`) pass through unchanged. The
+backwards-compatible default `--config ./config.yaml` still puts
+`./logs/` and `./var/` next to the config file (which in that case is
+also next to your CWD).
+
 ## Etag
 
 On load the file's raw bytes are SHA-256'd; the hash appears as `etag`

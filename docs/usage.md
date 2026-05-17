@@ -18,6 +18,16 @@ Required files no matter the OS:
   Chromium; native installs need it on `$PATH` or via
   `chromium.binary: "/path/to/chrome"` in `config.yaml`.
 
+> **Placing config outside an LLM agent's sandbox.** Relative paths in
+> `config.yaml` (`log_file`, `user_data_dir`) resolve against the
+> **config file's parent directory**, not the daemon's CWD. So putting
+> the whole installation under `/etc/access-control-browser/` (or any
+> directory outside the agent's writable area) and starting the daemon
+> with `--config /etc/access-control-browser/config.yaml` keeps logs
+> and the Chromium profile out of the agent's reach. See
+> [docs/config-schema.md](./config-schema.md#path-resolution) for
+> details.
+
 Once running, three things are useful to know:
 
 - **UI**: `http://127.0.0.1:39100/?token=<token>`. The live viewport

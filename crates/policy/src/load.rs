@@ -5,6 +5,7 @@
 // canonical-serialized raw config; identical input -> identical etag.
 
 use std::collections::HashSet;
+use std::path::Path;
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -46,8 +47,37 @@ pub enum LoadError {
 }
 
 pub fn load_policy(yaml: &str) -> Result<CompiledPolicy, LoadError> {
+    load_policy_with_base(yaml, None)
+}
+
+/// Load policy YAML, optionally resolving relative paths in `log_file` and
+/// `user_data_dir` against `base_dir`. The daemon passes the config file's
+/// parent directory so a config at `/etc/acb/config.yaml` with
+/// `log_file: "./logs/x.log"` produces `/etc/acb/logs/x.log` instead of
+/// inheriting the daemon's CWD (which on an LLM-agent host is typically
+/// the AI-writable sandbox).
+pub fn load_policy_with_base(
+    yaml: &str,
+    base_dir: Option<&Path>,
+) -> Result<CompiledPolicy, LoadError> {
     let raw: PolicyConfig = serde_yaml::from_str(yaml)?;
-    compile(raw, etag_of(yaml))
+    let mut compiled = compile(raw, etag_of(yaml))?;
+    if let Some(base) = base_dir {
+        compiled.server.log_file = resolve_relative(&compiled.server.log_file, base);
+        compiled.chromium.user_data_dir = resolve_relative(&compiled.chromium.user_data_dir, base);
+    }
+    Ok(compiled)
+}
+
+fn resolve_relative(p: &str, base: &Path) -> String {
+    let path = Path::new(p);
+    if path.is_absolute() {
+        return p.to_string();
+    }
+    // Strip a leading `./` for cleaner output; treat `.` alone or anything
+    // else as join-against-base.
+    let stripped = path.strip_prefix(".").unwrap_or(path);
+    base.join(stripped).to_string_lossy().into_owned()
 }
 
 fn etag_of(yaml: &str) -> String {

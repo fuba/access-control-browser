@@ -84,7 +84,8 @@ async fn reload_once(path: &PathBuf, state: &AppState) {
             return;
         }
     };
-    match acb_policy::load::load_policy(&yaml) {
+    let base = path.parent().unwrap_or(std::path::Path::new("."));
+    match acb_policy::load::load_policy_with_base(&yaml, Some(base)) {
         Ok(new_policy) => {
             let etag = new_policy.etag.clone();
             state.swap_policy(Arc::new(new_policy));
@@ -107,7 +108,8 @@ async fn reload_once(path: &PathBuf, state: &AppState) {
 /// Force a single reload. Returns the resulting etag on success.
 pub async fn reload_now(path: &PathBuf, state: &AppState) -> anyhow::Result<String> {
     let yaml = std::fs::read_to_string(path)?;
-    let new_policy = acb_policy::load::load_policy(&yaml)?;
+    let base = path.parent().unwrap_or(std::path::Path::new("."));
+    let new_policy = acb_policy::load::load_policy_with_base(&yaml, Some(base))?;
     let etag = new_policy.etag.clone();
     state.swap_policy(Arc::new(new_policy));
     let _ = state.events().send(ActivityEvent::PolicyReloaded {
