@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
 
@@ -51,9 +52,6 @@ jobs:
         run: |
           set -e
           out=$(grep -RE "Runtime\.evaluate|expression\s*:" crates/daemon/src || true)
-          # We deliberately use Runtime::evaluate in injected.rs to load the
-          # fixed helper, but only with a constant-string. Anything outside
-          # crates/daemon/src/browser/injected.rs is a regression.
           violations=$(printf "%s\n" "$out" | grep -v 'crates/daemon/src/browser/injected.rs' || true)
           if [ -n "$violations" ]; then
             echo "Forbidden Runtime.evaluate usage outside helper bootstrap:"
@@ -62,8 +60,14 @@ jobs:
           fi
 
   docker-build:
+    # On main / PR: build amd64+arm64 to verify the Dockerfile.
+    # On a v* tag push: also push to ghcr.io with semver-derived tags.
     name: Docker buildx (amd64 + arm64)
     runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -73,10 +77,30 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build multi-arch image
+      - name: Log in to GHCR
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Build (and push on v* tag)
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: false
-          tags: access-control-browser:ci
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
