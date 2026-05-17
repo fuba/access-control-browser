@@ -8,8 +8,17 @@ use support::{fixture_policy, TestDaemon};
 async fn healthz_is_unauthenticated() {
     let policy = fixture_policy(r#"  []"#);
     let d = TestDaemon::spawn(policy).await;
-    let res = d.client().get(format!("{}/healthz", d.base)).send().await.unwrap();
-    assert!(res.status().is_success(), "healthz should be 200, got {}", res.status());
+    let res = d
+        .client()
+        .get(format!("{}/healthz", d.base))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        res.status().is_success(),
+        "healthz should be 200, got {}",
+        res.status()
+    );
     assert_eq!(res.headers().get("x-acb").unwrap(), "1");
     d.shutdown().await;
 }
@@ -18,7 +27,12 @@ async fn healthz_is_unauthenticated() {
 async fn config_requires_token() {
     let policy = fixture_policy(r#"  []"#);
     let d = TestDaemon::spawn(policy).await;
-    let res = d.client().get(format!("{}/config", d.base)).send().await.unwrap();
+    let res = d
+        .client()
+        .get(format!("{}/config", d.base))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), 401, "no token must be 401");
     d.shutdown().await;
 }

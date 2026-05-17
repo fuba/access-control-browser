@@ -52,7 +52,11 @@ impl AppState {
     }
 
     pub fn policy_path(&self) -> Option<PathBuf> {
-        self.inner.policy_path.try_read().ok().and_then(|g| g.clone())
+        self.inner
+            .policy_path
+            .try_read()
+            .ok()
+            .and_then(|g| g.clone())
     }
 
     pub fn policy(&self) -> Arc<CompiledPolicy> {

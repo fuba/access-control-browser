@@ -72,7 +72,10 @@ async fn disallowed_popup_is_closed() {
     if let Ok(true) = deadline {
         popup_blocked = true;
     }
-    assert!(popup_blocked, "popup should have been blocked and an event emitted");
+    assert!(
+        popup_blocked,
+        "popup should have been blocked and an event emitted"
+    );
 
     let _ = page_shutdown.send(());
     d.shutdown().await;

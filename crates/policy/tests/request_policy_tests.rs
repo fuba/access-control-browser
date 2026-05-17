@@ -45,14 +45,24 @@ fn allowed(d: &RequestDecision) -> bool {
 #[test]
 fn top_level_allowed() {
     let cfg = fixture(true);
-    let d = decide_request("https://site-a.example/", RequestKind::TopLevelDocument, None, &cfg);
+    let d = decide_request(
+        "https://site-a.example/",
+        RequestKind::TopLevelDocument,
+        None,
+        &cfg,
+    );
     assert!(allowed(&d));
 }
 
 #[test]
 fn top_level_blocked() {
     let cfg = fixture(true);
-    let d = decide_request("https://evil.example/", RequestKind::TopLevelDocument, None, &cfg);
+    let d = decide_request(
+        "https://evil.example/",
+        RequestKind::TopLevelDocument,
+        None,
+        &cfg,
+    );
     assert!(!allowed(&d));
 }
 

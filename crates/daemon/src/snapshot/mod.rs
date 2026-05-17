@@ -51,9 +51,13 @@ pub async fn take(session: &Arc<Session>, state: &AppState) -> Result<SnapshotRe
         .map(|s| s.to_string())
         .collect();
 
-    let raw = call_helper(&session.page, "collect", &[Value::Array(
-        classes.iter().cloned().map(Value::String).collect(),
-    )])
+    let raw = call_helper(
+        &session.page,
+        "collect",
+        &[Value::Array(
+            classes.iter().cloned().map(Value::String).collect(),
+        )],
+    )
     .await?;
 
     let arr = raw.as_array().cloned().unwrap_or_default();
@@ -72,10 +76,18 @@ pub async fn take(session: &Arc<Session>, state: &AppState) -> Result<SnapshotRe
         acb_to_ref.insert(acb_id, r.clone());
         items.push(SnapshotItem {
             r#ref: r,
-            tag: v.get("tag").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            tag: v
+                .get("tag")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             role: v.get("role").and_then(|x| x.as_str()).map(String::from),
             name: v.get("name").and_then(|x| x.as_str()).map(String::from),
-            text: v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            text: v
+                .get("text")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             href: v.get("href").and_then(|x| x.as_str()).map(String::from),
             rect: v.get("rect").and_then(|x| {
                 Some(Rect {
@@ -96,7 +108,10 @@ pub async fn take(session: &Arc<Session>, state: &AppState) -> Result<SnapshotRe
             }
         }
     }
-    Ok(SnapshotResponse { generation: gen, refs: items })
+    Ok(SnapshotResponse {
+        generation: gen,
+        refs: items,
+    })
 }
 
 pub fn validate_ref_format(r: &str) -> bool {

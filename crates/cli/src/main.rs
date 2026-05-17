@@ -43,23 +43,15 @@ enum Cmd {
     /// Reload the daemon's policy file.
     Reload,
     /// Open a URL in a session (creates one if there's no current session).
-    Open {
-        url: String,
-    },
+    Open { url: String },
     /// List accessible elements in the current page.
     Snapshot,
     /// Click an element by ref.
     Click { r#ref: String },
     /// Fill a text field by ref.
-    Fill {
-        r#ref: String,
-        text: String,
-    },
+    Fill { r#ref: String, text: String },
     /// Type text into a field (appends).
-    Type {
-        r#ref: String,
-        text: String,
-    },
+    Type { r#ref: String, text: String },
     /// Dispatch a key press on a ref.
     Press { r#ref: String, key: String },
     /// Hover the mouse over a ref.
@@ -150,7 +142,8 @@ async fn status(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
     // *our* daemon (x-acb header).
     let client = reqwest::Client::new();
     let res = client.get(format!("{base}/healthz")).send().await?;
-    if !res.status().is_success() || res.headers().get("x-acb").map(|v| v.as_bytes()) != Some(b"1") {
+    if !res.status().is_success() || res.headers().get("x-acb").map(|v| v.as_bytes()) != Some(b"1")
+    {
         eprintln!("daemon not responding at {base}");
         return Ok(ExitCode::from(1));
     }
@@ -209,10 +202,7 @@ async fn open_cmd(base: String, token_file: Option<PathBuf>, url: String) -> Res
     let d = Daemon::connect(base, token_file)?;
     let id = ensure_session(&d).await?;
     let res = d
-        .post_json(
-            &format!("/sessions/{id}/open"),
-            &json!({"url": url}),
-        )
+        .post_json(&format!("/sessions/{id}/open"), &json!({"url": url}))
         .await?;
     if !res.status().is_success() {
         let status = res.status();
@@ -244,7 +234,9 @@ async fn snapshot_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitC
         println!(
             "{} {} {}",
             r["ref"].as_str().unwrap_or(""),
-            r["role"].as_str().unwrap_or(r["tag"].as_str().unwrap_or("")),
+            r["role"]
+                .as_str()
+                .unwrap_or(r["tag"].as_str().unwrap_or("")),
             r["text"].as_str().unwrap_or("")
         );
     }

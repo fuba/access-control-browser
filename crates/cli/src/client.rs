@@ -64,6 +64,9 @@ fn read_token(override_path: Option<PathBuf>) -> Result<String> {
     let p = override_path.unwrap_or_else(default_token_path);
     let s = std::fs::read_to_string(&p)
         .with_context(|| format!("read token file {} (is the daemon running?)", p.display()))?;
-    let line = s.lines().next().ok_or_else(|| anyhow!("empty token file"))?;
+    let line = s
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow!("empty token file"))?;
     Ok(line.trim().to_string())
 }

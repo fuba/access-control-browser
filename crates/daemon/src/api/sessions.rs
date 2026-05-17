@@ -20,7 +20,12 @@ pub async fn create(
 ) -> Result<Json<SessionCreated>, (StatusCode, String)> {
     let browser = match state.browser_clone().await {
         Some(b) => b,
-        None => return Err((StatusCode::INTERNAL_SERVER_ERROR, "browser not ready".into())),
+        None => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "browser not ready".into(),
+            ))
+        }
     };
     // about:blank is a Chromium internal URL; it is not subject to our
     // allowlist because there is no network fetch.

@@ -79,9 +79,7 @@ async fn cross_origin_subresource_is_inherited() {
         .page
         .execute(
             chromiumoxide::cdp::js_protocol::runtime::EvaluateParams::builder()
-                .expression(
-                    "getComputedStyle(document.getElementById('x')).color",
-                )
+                .expression("getComputedStyle(document.getElementById('x')).color")
                 .return_by_value(true)
                 .build()
                 .unwrap(),
@@ -90,7 +88,13 @@ async fn cross_origin_subresource_is_inherited() {
         .unwrap()
         .result
         .clone();
-    let color = computed.result.value.as_ref().and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let color = computed
+        .result
+        .value
+        .as_ref()
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
     assert_eq!(color, "rgb(7, 11, 13)", "CSS should have been applied");
 
     let _ = cdn_shutdown.send(());

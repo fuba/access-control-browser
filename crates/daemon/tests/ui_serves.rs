@@ -46,13 +46,10 @@ async fn sse_accepts_query_token() {
         .build()
         .unwrap();
     let url = format!("{}/events?token={}", d.base, d.token);
-    let res = tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        client.get(&url).send(),
-    )
-    .await
-    .expect("headers within 3s")
-    .expect("request ok");
+    let res = tokio::time::timeout(std::time::Duration::from_secs(3), client.get(&url).send())
+        .await
+        .expect("headers within 3s")
+        .expect("request ok");
     assert!(res.status().is_success(), "got {}", res.status());
     drop(res); // close the stream
     d.shutdown().await;
@@ -62,7 +59,12 @@ async fn sse_accepts_query_token() {
 async fn sse_rejects_missing_query_token() {
     let policy = fixture_policy(r#"  []"#);
     let d = TestDaemon::spawn(policy).await;
-    let res = d.client().get(format!("{}/events", d.base)).send().await.unwrap();
+    let res = d
+        .client()
+        .get(format!("{}/events", d.base))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(res.status(), 401);
     d.shutdown().await;
 }

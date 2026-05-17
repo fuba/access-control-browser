@@ -66,8 +66,7 @@ async fn resolve_or_gone(
         .get_session(id)
         .await
         .ok_or((StatusCode::NOT_FOUND, "no such session".into()))?;
-    let acb_id = parse_ref(&session, r)
-        .ok_or((StatusCode::GONE, "stale or unknown ref".into()))?;
+    let acb_id = parse_ref(&session, r).ok_or((StatusCode::GONE, "stale or unknown ref".into()))?;
     Ok((session, acb_id))
 }
 
@@ -192,20 +191,10 @@ pub async fn find(
         .collect();
     let result = match body {
         FindBody::Role { query } => {
-            call_helper(
-                &session.page,
-                "findRole",
-                &[json!(query), json!(classes)],
-            )
-            .await
+            call_helper(&session.page, "findRole", &[json!(query), json!(classes)]).await
         }
         FindBody::Text { query } => {
-            call_helper(
-                &session.page,
-                "findText",
-                &[json!(query), json!(classes)],
-            )
-            .await
+            call_helper(&session.page, "findText", &[json!(query), json!(classes)]).await
         }
     }
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("find: {e}")))?;

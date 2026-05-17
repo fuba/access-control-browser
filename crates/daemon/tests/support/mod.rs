@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use acb_policy::CompiledPolicy;
 use acb_daemon::{auth, start, RunningDaemon, StartConfig};
+use acb_policy::CompiledPolicy;
 
 pub struct TestDaemon {
     pub running: RunningDaemon,
@@ -58,7 +58,9 @@ impl TestDaemon {
 /// Spin up a tiny in-memory file server serving the given map under
 /// `http://127.0.0.1:<port>/<path>`. Returns (base_url, shutdown_tx).
 /// `Content-Type` is sniffed crudely from the extension.
-pub async fn spawn_static(files: HashMap<String, Vec<u8>>) -> (String, tokio::sync::oneshot::Sender<()>) {
+pub async fn spawn_static(
+    files: HashMap<String, Vec<u8>>,
+) -> (String, tokio::sync::oneshot::Sender<()>) {
     use axum::body::Body;
     use axum::http::{header, HeaderValue, StatusCode};
     use axum::response::Response;

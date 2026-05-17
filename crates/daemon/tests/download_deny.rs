@@ -98,7 +98,10 @@ async fn download_deny_keeps_us_on_page() {
         .as_ref()
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    assert!(still_here, "page must remain (download Deny prevented save)");
+    assert!(
+        still_here,
+        "page must remain (download Deny prevented save)"
+    );
 
     let _ = page_shutdown.send(());
     d.shutdown().await;

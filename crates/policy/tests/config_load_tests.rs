@@ -127,7 +127,10 @@ fn port_zero_rejected() {
     let mut yaml = minimal_yaml();
     yaml = yaml.replace("port: 39100", "port: 0");
     let err = load_policy(&yaml).expect_err("port=0 must reject");
-    assert!(matches!(err, LoadError::InvalidServer { .. }), "got {err:?}");
+    assert!(
+        matches!(err, LoadError::InvalidServer { .. }),
+        "got {err:?}"
+    );
 }
 
 #[test]

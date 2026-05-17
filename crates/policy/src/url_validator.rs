@@ -89,7 +89,11 @@ pub(crate) fn rule_matches(url: &Url, rule: &CompiledRule) -> bool {
                 }
             }
         },
-        CompiledMatch::IpCidr { net, ports, schemes } => {
+        CompiledMatch::IpCidr {
+            net,
+            ports,
+            schemes,
+        } => {
             if !schemes.is_empty() {
                 let s = url.scheme().to_ascii_lowercase();
                 if !schemes.iter().any(|x| x == &s) {

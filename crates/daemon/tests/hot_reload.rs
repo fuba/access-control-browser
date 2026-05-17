@@ -8,11 +8,10 @@ mod support;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::json;
 use tempfile::NamedTempFile;
 use tokio::time::timeout;
 
-use acb_daemon::{auth, events::ActivityEvent, start, RunningDaemon, StartConfig};
+use acb_daemon::{auth, start, RunningDaemon, StartConfig};
 
 const POLICY_A: &str = r#"
 server:
@@ -76,9 +75,13 @@ async fn spawn_with_file(yaml: &str) -> (RunningDaemon, String, NamedTempFile, t
     let running = start(cfg).await.expect("daemon start");
     running.state.set_policy_path(f.path().to_path_buf()).await;
     // Start the watcher with a short polling interval so the test doesn't
-    // depend on inotify delivery.
-    let _ = acb_daemon::reload::spawn(f.path().to_path_buf(), 200, running.state.clone());
-    let base = format!("http://{}", running.addr);
+    // depend on inotify delivery. The JoinHandle is dropped (detached);
+    // the spawned task is cancelled when the runtime tears down.
+    drop(acb_daemon::reload::spawn(
+        f.path().to_path_buf(),
+        200,
+        running.state.clone(),
+    ));
     (running, token, f, profile)
 }
 

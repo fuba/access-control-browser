@@ -13,7 +13,11 @@ use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "acb-daemon", version, about = "Access-controlled browser daemon")]
+#[command(
+    name = "acb-daemon",
+    version,
+    about = "Access-controlled browser daemon"
+)]
 struct Cli {
     /// Path to the policy YAML file.
     #[arg(long, default_value = "./config.yaml", env = "ACB_CONFIG")]
@@ -63,14 +67,15 @@ async fn main() -> Result<()> {
     );
     let (nb, _guard) = tracing_appender::non_blocking(file_appender);
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    let subscriber = tracing_subscriber::fmt()
+    // Foreground and background both write to the rolling file. Foreground
+    // ANSI mirroring is a TODO; for now both modes go to the same writer
+    // sans ANSI so log files don't contain escape sequences.
+    let _ = cli.foreground;
+    tracing_subscriber::fmt()
         .with_env_filter(env_filter)
-        .with_writer(nb);
-    if cli.foreground {
-        subscriber.with_ansi(false).init();
-    } else {
-        subscriber.with_ansi(false).init();
-    }
+        .with_writer(nb)
+        .with_ansi(false)
+        .init();
     tracing::info!(
         config = %cli.config.display(),
         bind = %policy.server.bind,
@@ -102,7 +107,8 @@ async fn main() -> Result<()> {
     .await?;
     running.state.set_policy_path(cli.config.clone()).await;
 
-    let _reload_handle = acb_daemon::reload::spawn(cli.config.clone(), poll_ms, running.state.clone());
+    let _reload_handle =
+        acb_daemon::reload::spawn(cli.config.clone(), poll_ms, running.state.clone());
 
     tracing::info!(addr = %running.addr, token_file = %token_path.display(), "acb-daemon listening");
 

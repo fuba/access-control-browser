@@ -19,6 +19,9 @@
 use std::sync::Arc;
 
 use acb_policy::request_policy::{decide_request, RequestDecision, RequestKind};
+use chromiumoxide::cdp::browser_protocol::browser::{
+    SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
+};
 use chromiumoxide::cdp::browser_protocol::fetch::{
     ContinueRequestParams, EnableParams as FetchEnableParams, EventRequestPaused,
     FailRequestParams, RequestPattern, RequestStage,
@@ -26,13 +29,8 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, ResourceType, SetBypassServiceWorkerParams,
 };
-use chromiumoxide::cdp::browser_protocol::browser::{
-    SetDownloadBehaviorBehavior, SetDownloadBehaviorParams,
-};
 use chromiumoxide::cdp::browser_protocol::page::EventFrameNavigated;
-use chromiumoxide::cdp::browser_protocol::target::{
-    EventTargetCreated, CloseTargetParams,
-};
+use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, EventTargetCreated};
 use futures::StreamExt;
 
 use crate::browser::session::Session;
@@ -99,7 +97,10 @@ pub async fn install(session: Arc<Session>, state: AppState) -> anyhow::Result<(
         Some(b) => b,
         None => return Ok(()),
     };
-    let mut targets = browser.browser.event_listener::<EventTargetCreated>().await?;
+    let mut targets = browser
+        .browser
+        .event_listener::<EventTargetCreated>()
+        .await?;
     let s3 = session.clone();
     let st3 = state.clone();
     let task3 = tokio::spawn(async move {

@@ -118,13 +118,17 @@ fn compile_rule(r: RawRule) -> Result<CompiledRule, LoadError> {
             }
             CompiledMatch::Fqdn { host, subdomains }
         }
-        RuleMatch::IpCidr { cidr, ports, schemes } => {
-            let net: ipnet::IpNet = cidr.parse().map_err(|e: ipnet::AddrParseError| {
-                LoadError::InvalidCidr {
-                    rule: r.name.clone(),
-                    message: e.to_string(),
-                }
-            })?;
+        RuleMatch::IpCidr {
+            cidr,
+            ports,
+            schemes,
+        } => {
+            let net: ipnet::IpNet =
+                cidr.parse()
+                    .map_err(|e: ipnet::AddrParseError| LoadError::InvalidCidr {
+                        rule: r.name.clone(),
+                        message: e.to_string(),
+                    })?;
             for p in &ports {
                 if *p == 0 {
                     return Err(LoadError::InvalidPort {
@@ -145,7 +149,10 @@ fn compile_rule(r: RawRule) -> Result<CompiledRule, LoadError> {
             CompiledMatch::IpCidr {
                 net,
                 ports,
-                schemes: schemes.into_iter().map(|s| s.to_ascii_lowercase()).collect(),
+                schemes: schemes
+                    .into_iter()
+                    .map(|s| s.to_ascii_lowercase())
+                    .collect(),
             }
         }
     };
@@ -156,4 +163,3 @@ fn compile_rule(r: RawRule) -> Result<CompiledRule, LoadError> {
         allowed_classes: r.allowed_classes,
     })
 }
-

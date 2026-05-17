@@ -17,8 +17,8 @@ use chromiumoxide::cdp::js_protocol::runtime::{
     CallArgument, CallFunctionOnParams, ExecutionContextId, RemoteObject,
 };
 use chromiumoxide::Page;
-use sha2::{Digest, Sha256};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 const HELPER_JS: &str = include_str!("../../../injected-js/dist/snapshot-helper.js");
 const ACB_WORLD: &str = "acb_world";
@@ -70,7 +70,7 @@ pub async fn isolated_context(page: &Page) -> Result<ExecutionContextId> {
             grant_univeral_access: Some(false),
         })
         .await?;
-    Ok(r.execution_context_id.clone())
+    Ok(r.execution_context_id)
 }
 
 /// Invoke a method on `__acb` inside the isolated world. `method_name` is
