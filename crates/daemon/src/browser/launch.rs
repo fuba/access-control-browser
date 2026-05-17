@@ -53,7 +53,13 @@ pub async fn launch(
     } else {
         builder = builder.with_head();
     }
-    builder = builder.request_timeout(Duration::from_secs(30));
+    builder = builder
+        .request_timeout(Duration::from_secs(30))
+        // chromiumoxide's default is 20s. CI runners under D-Bus contention
+        // sometimes need longer to settle Chromium's startup before
+        // exposing the WebSocket URL. Doubling it cheaply removes a class
+        // of flaky CI failures.
+        .launch_timeout(Duration::from_secs(60));
 
     let config = builder
         .build()
