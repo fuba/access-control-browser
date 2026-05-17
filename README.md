@@ -42,4 +42,9 @@ Windows-native `.exe` is deferred to v0.3.
 
 ## License
 
-MIT. See `LICENSE`.
+`access-control-browser` is MIT-licensed — see [`LICENSE`](./LICENSE).
+
+Third-party components bundled with the binary (Rust crates) or with the
+Docker image (Chromium, Noto fonts, Debian system libraries) carry their
+own permissive licenses; see [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md)
+for the aggregated attribution.

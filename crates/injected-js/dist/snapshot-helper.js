@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 fuba — part of access-control-browser
+// (https://github.com/fuba/access-control-browser).
+//
 // access-control-browser DOM helper. Lives in an isolated world so page
 // scripts cannot read or override it. Exposes a frozen `__acb` object with
 // only the methods the daemon calls; there is no eval surface here.
