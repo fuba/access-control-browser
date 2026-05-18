@@ -29,7 +29,7 @@ use chromiumoxide::cdp::browser_protocol::fetch::{
 use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, ResourceType, SetBypassServiceWorkerParams,
 };
-use chromiumoxide::cdp::browser_protocol::page::EventFrameNavigated;
+use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, GetFrameTreeParams};
 use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, EventTargetCreated};
 use futures::StreamExt;
 
@@ -80,13 +80,22 @@ pub async fn install(session: Arc<Session>, state: AppState) -> anyhow::Result<(
     });
     session.push_task(task).await;
 
-    // Track frame navigations: keep current_url and learn the main frame id.
+    // Seed main_frame_id now so the very first navigation's request
+    // (which arrives before the first frame_navigated event) classifies
+    // correctly as TopLevelDocument instead of SubFrameDocument.
+    if let Ok(tree) = session.page.execute(GetFrameTreeParams::default()).await {
+        let main_id: String = tree.frame_tree.frame.id.inner().clone();
+        *session.main_frame_id.write().await = Some(main_id);
+    }
+
+    // Track frame navigations: keep current_url and the main frame id.
     let mut navs = session.page.event_listener::<EventFrameNavigated>().await?;
     let s2 = session.clone();
     let task2 = tokio::spawn(async move {
         while let Some(ev) = navs.next().await {
             if ev.frame.parent_id.is_none() {
                 *s2.current_url.write().await = Some(ev.frame.url.clone());
+                *s2.main_frame_id.write().await = Some(ev.frame.id.inner().clone());
             }
         }
     });
@@ -145,17 +154,27 @@ pub async fn install(session: Arc<Session>, state: AppState) -> anyhow::Result<(
     Ok(())
 }
 
-fn classify(ev: &EventRequestPaused) -> RequestKind {
+async fn classify(ev: &EventRequestPaused, session: &Session) -> RequestKind {
     match &ev.resource_type {
         ResourceType::Document => {
-            // For top-level vs subframe document, we'd ideally check parent
-            // frame. As an approximation we treat any Document load whose
-            // request URL is what triggered our `open` call as top-level by
-            // policy gate (which already validates), and subframe documents
-            // also get validated as top-level — that is the stricter rule
-            // and matches the security model (each new document is a fresh
-            // navigation that must pass the allowlist).
-            RequestKind::TopLevelDocument
+            // Document requests in CDP cover both top-level navigations
+            // AND iframe loads. Distinguish by comparing frame id with
+            // the session's main frame. Sub-frame documents go through
+            // the inherit_page policy like any other sub-resource —
+            // otherwise sites like Yahoo / news / e-commerce that embed
+            // ads, captchas, or analytics iframes from third-party
+            // origins would have those iframes blocked even when the
+            // page itself is allowlisted.
+            let main = session.main_frame_id.read().await.clone();
+            let this = ev.frame_id.inner().clone();
+            match main {
+                Some(m) if m == this => RequestKind::TopLevelDocument,
+                Some(_) => RequestKind::SubFrameDocument,
+                // Main frame id not yet known: assume top-level. This is
+                // the conservative branch for the very first request of
+                // a session; the seed in install() makes it rare.
+                None => RequestKind::TopLevelDocument,
+            }
         }
         _ => RequestKind::Subresource,
     }
@@ -163,7 +182,7 @@ fn classify(ev: &EventRequestPaused) -> RequestKind {
 
 async fn handle_paused(ev: &EventRequestPaused, session: &Session, state: &AppState) {
     let req_url = ev.request.url.clone();
-    let kind = classify(ev);
+    let kind = classify(ev, session).await;
     let page_url = session.current_url.read().await.clone();
     let policy = state.policy();
     let decision = decide_request(&req_url, kind, page_url.as_deref(), &policy);

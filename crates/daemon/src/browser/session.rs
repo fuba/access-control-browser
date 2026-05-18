@@ -15,6 +15,13 @@ pub struct Session {
     /// Top-level page URL, updated on `Page.frameNavigated`. Used by the
     /// request interceptor to apply the inherit-page subresource rule.
     pub current_url: RwLock<Option<String>>,
+    /// FrameId of the page's main frame. Discovered at session create
+    /// via Page.getFrameTree and re-confirmed on every parent_id-less
+    /// frame_navigated event. The request interceptor uses it to tell a
+    /// top-level document load (which must pass validate_url) apart from
+    /// a sub-frame document load (which inherits from current_url like
+    /// any other sub-resource).
+    pub main_frame_id: RwLock<Option<String>>,
     /// @eN ref allocator and stale-generation tracker.
     pub ref_table: RefTable,
     /// Broadcast of decoded screencast frames (JPEG bytes). WS subscribers
@@ -41,6 +48,7 @@ impl Session {
             id,
             page,
             current_url: RwLock::new(None),
+            main_frame_id: RwLock::new(None),
             ref_table: RefTable::new(),
             viewport_frames: tx,
             last_frame: RwLock::new(None),
