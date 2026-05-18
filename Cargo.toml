@@ -44,8 +44,11 @@ tower-http = { version = "0.5", features = ["set-header"] }
 futures = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
-# CDP
-chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+# CDP — kept on the newest crates.io release because Chromium's CDP
+# schema changes between major Chromium versions; older chromiumoxide
+# crates fail to deserialize WS responses ("did not match any variant
+# of untagged enum Message") against Chrome 147.
+chromiumoxide = "0.9"
 
 # Misc daemon utilities
 arc-swap = "1.7"
