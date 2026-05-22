@@ -59,7 +59,17 @@ export function Viewport({
 
     ws.onmessage = (ev) => {
       if (!(ev.data instanceof Blob)) return;
-      const next = URL.createObjectURL(ev.data);
+      // Binary WS frames arrive with Blob.type === "". Some browsers
+      // refuse to decode an <img src="blob:..."> URL without a sniff-able
+      // MIME (especially under headless / strict CSP), and the image
+      // renders as a blank box even though the bytes are a valid JPEG.
+      // Re-wrap with an explicit image/jpeg type so the browser always
+      // decodes.
+      const blob =
+        ev.data.type === "image/jpeg"
+          ? ev.data
+          : new Blob([ev.data], { type: "image/jpeg" });
+      const next = URL.createObjectURL(blob);
       const img = imgRef.current;
       if (img) {
         const prev = blobUrlRef.current;
@@ -226,6 +236,9 @@ export function Viewport({
         <span>frames: {frames}</span>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
           last: {lastSent}
+        </span>
+        <span data-acb-sid={sessionId || ""} style={{ opacity: 0.6 }}>
+          sid: {sessionId ? sessionId.slice(0, 12) + "…" : "(none)"}
         </span>
       </div>
 

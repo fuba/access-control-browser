@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ConfigSummary,
   ValidateResult,
@@ -89,14 +89,38 @@ export default function Home() {
     setValidation(validateUrl(url.trim(), cfg));
   }, [url, cfg]);
 
+  // Mirror sessionId into a ref so async callbacks read the latest value
+  // even if they were scheduled (e.g. setTimeout) before the matching
+  // setSessionId re-render landed. Without this, a click->open->snapshot
+  // sequence races: takeSnapshot's stale closure sees sessionId=null,
+  // calls ensureSession again, and creates a second session that the
+  // Viewport WS then subscribes to — leaving the first (Yahoo-loaded)
+  // session orphaned and showing a blank tab in the UI.
+  const sessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const ensureSession = useCallback(async () => {
-    if (sessionId) return sessionId;
+    if (sessionIdRef.current) return sessionIdRef.current;
     const r = await authFetch(token, "/sessions", { method: "POST" });
     if (!r.ok) return null;
     const v = await r.json();
+    sessionIdRef.current = v.id;
     setSessionId(v.id);
     return v.id as string;
-  }, [token, sessionId]);
+  }, [token]);
+
+  const takeSnapshot = useCallback(async () => {
+    const id = sessionIdRef.current || (await ensureSession());
+    if (!id) return;
+    const r = await authFetch(token, `/sessions/${id}/snapshot`, {
+      method: "POST",
+    });
+    if (!r.ok) return;
+    const v = await r.json();
+    setSnap(v.refs || []);
+  }, [ensureSession, token]);
 
   const open = useCallback(async () => {
     const id = await ensureSession();
@@ -123,18 +147,7 @@ export default function Home() {
       // small delay so the page has time to paint
       setTimeout(takeSnapshot, 500);
     }
-  }, [ensureSession, token, url]);
-
-  const takeSnapshot = useCallback(async () => {
-    const id = sessionId || (await ensureSession());
-    if (!id) return;
-    const r = await authFetch(token, `/sessions/${id}/snapshot`, {
-      method: "POST",
-    });
-    if (!r.ok) return;
-    const v = await r.json();
-    setSnap(v.refs || []);
-  }, [ensureSession, sessionId, token]);
+  }, [ensureSession, takeSnapshot, token, url]);
 
   const submitDisabled = useMemo(
     () => !cfg || !validation || !validation.ok || !url.trim(),

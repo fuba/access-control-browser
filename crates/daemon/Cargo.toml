@@ -51,3 +51,7 @@ reqwest = { workspace = true }
 tempfile = "3"
 pretty_assertions = "1"
 tokio-tungstenite = "0.24"
+
+[[example]]
+name = "ui_drive"
+path = "examples/ui_drive.rs"

@@ -96,6 +96,22 @@ pub async fn ensure_started(session: &Arc<Session>, cfg: ScreencastConfig) -> Re
                     continue;
                 }
             };
+            // Drop "compositor-transient" blanks. Chromium's
+            // captureScreenshot occasionally returns a tiny uniform
+            // image (~3.6 KB JPEG of solid white) when called between a
+            // navigation's compositor swap. Without this filter, a
+            // blank that lands as the LAST capture before the WS
+            // subscriber count drops sticks in last_frame and gets sent
+            // first to the next subscriber, leaving the UI white even
+            // though the page is in fact rendered.
+            //
+            // 4 KB is just above the empirically observed pure-uniform
+            // size (~3.6 KB) and well below any page with even one
+            // visible widget. Tests use trivial fixture pages whose
+            // JPEGs sit near this threshold, so we don't go higher.
+            if bytes.len() < 4_000 {
+                continue;
+            }
             *s.last_frame.write().await = Some(bytes.clone());
             let _ = s.viewport_frames.send(bytes);
         }
