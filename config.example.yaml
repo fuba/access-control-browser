@@ -1,5 +1,5 @@
 # Example policy file. Copy to ./config.yaml and edit.
-# See docs/plan.md for the full schema.
+# See docs/config-schema.md for the full schema.
 
 server:
   bind: "127.0.0.1"
