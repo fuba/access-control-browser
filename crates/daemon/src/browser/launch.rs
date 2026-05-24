@@ -31,17 +31,25 @@ pub async fn launch(
     // bypass our Fetch interceptor; background networking off to keep
     // request flow predictable; no-first-run / no-default-browser-check
     // so headless launches are quiet.
+    //
+    // IMPORTANT: chromiumoxide 0.9's `arg()` prepends `--` itself
+    // (the string becomes the flag key and is rendered as `--{key}`).
+    // Passing a leading `--` here produces a malformed `----no-sandbox`
+    // that Chromium silently ignores — which on hosts without
+    // unprivileged user namespaces (CI runners under AppArmor, default
+    // Docker containers) makes Chromium abort with "No usable sandbox".
+    // So these are written WITHOUT the leading dashes.
     let args = [
-        "--disable-features=WebRTC,WebTransport,SharedArrayBuffer",
-        "--disable-background-networking",
-        "--disable-component-update",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-default-apps",
-        "--disable-dev-shm-usage",
+        "disable-features=WebRTC,WebTransport,SharedArrayBuffer",
+        "disable-background-networking",
+        "disable-component-update",
+        "no-first-run",
+        "no-default-browser-check",
+        "disable-default-apps",
+        "disable-dev-shm-usage",
         // Required when running as root or inside an unprivileged container
         // without user namespaces.
-        "--no-sandbox",
+        "no-sandbox",
     ];
     for a in args {
         builder = builder.arg(a);
