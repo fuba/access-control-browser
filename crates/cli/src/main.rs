@@ -24,6 +24,11 @@ struct Cli {
     /// Path to the daemon's bearer token file.
     #[arg(long, env = "ACB_TOKEN_FILE")]
     token_file: Option<PathBuf>,
+    /// Operate on a specific session id (one-shot override; beats the
+    /// `use` pin and the last-used session). Discover ids with
+    /// `acb-cli sessions`.
+    #[arg(long, global = true, env = "ACB_SESSION")]
+    session: Option<String>,
     #[command(subcommand)]
     cmd: Cmd,
 }
@@ -42,8 +47,21 @@ enum Cmd {
     Config,
     /// Reload the daemon's policy file.
     Reload,
+    /// List live sessions (id / url / title), marking the pinned one.
+    Sessions,
+    /// Pin a session so subsequent commands target it (e.g. the tab a
+    /// human opened in the web UI). Discover ids with `acb-cli sessions`.
+    Use { sid: String },
+    /// Clear the pinned session.
+    Unuse,
     /// Open a URL in a session (creates one if there's no current session).
     Open { url: String },
+    /// Go back in the session's history.
+    Back,
+    /// Go forward in the session's history.
+    Forward,
+    /// Reload the current page.
+    ReloadPage,
     /// List accessible elements in the current page.
     Snapshot,
     /// Click an element by ref.
@@ -97,26 +115,31 @@ fn main() -> ExitCode {
 
 async fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
+    let base = cli.base;
+    let tf = cli.token_file;
+    let sess = cli.session;
     match cli.cmd {
         Cmd::Validate { url, config } => validate(url, config),
-        Cmd::Status => status(cli.base, cli.token_file).await,
-        Cmd::Config => config_cmd(cli.base, cli.token_file).await,
-        Cmd::Reload => reload_cmd(cli.base, cli.token_file).await,
-        Cmd::Open { url } => open_cmd(cli.base, cli.token_file, url).await,
-        Cmd::Snapshot => snapshot_cmd(cli.base, cli.token_file).await,
-        Cmd::Click { r#ref } => action_ref(cli.base, cli.token_file, "click", r#ref).await,
-        Cmd::Fill { r#ref, text } => {
-            action_ref_text(cli.base, cli.token_file, "fill", r#ref, text).await
-        }
-        Cmd::Type { r#ref, text } => {
-            action_ref_text(cli.base, cli.token_file, "type", r#ref, text).await
-        }
-        Cmd::Press { r#ref, key } => press_cmd(cli.base, cli.token_file, r#ref, key).await,
-        Cmd::Hover { r#ref } => action_ref(cli.base, cli.token_file, "hover", r#ref).await,
-        Cmd::Select { r#ref, value } => select_cmd(cli.base, cli.token_file, r#ref, value).await,
-        Cmd::Check { r#ref, checked } => check_cmd(cli.base, cli.token_file, r#ref, checked).await,
-        Cmd::Find { kind, query } => find_cmd(cli.base, cli.token_file, kind, query).await,
-        Cmd::Close => close_cmd(cli.base, cli.token_file).await,
+        Cmd::Status => status(base, tf).await,
+        Cmd::Config => config_cmd(base, tf).await,
+        Cmd::Reload => reload_cmd(base, tf).await,
+        Cmd::Sessions => sessions_cmd(base, tf).await,
+        Cmd::Use { sid } => use_cmd(base, tf, sid).await,
+        Cmd::Unuse => unuse_cmd().await,
+        Cmd::Open { url } => open_cmd(base, tf, sess, url).await,
+        Cmd::Back => action_session(base, tf, sess, "back").await,
+        Cmd::Forward => action_session(base, tf, sess, "forward").await,
+        Cmd::ReloadPage => action_session(base, tf, sess, "reload").await,
+        Cmd::Snapshot => snapshot_cmd(base, tf, sess).await,
+        Cmd::Click { r#ref } => action_ref(base, tf, sess, "click", r#ref).await,
+        Cmd::Fill { r#ref, text } => action_ref_text(base, tf, sess, "fill", r#ref, text).await,
+        Cmd::Type { r#ref, text } => action_ref_text(base, tf, sess, "type", r#ref, text).await,
+        Cmd::Press { r#ref, key } => press_cmd(base, tf, sess, r#ref, key).await,
+        Cmd::Hover { r#ref } => action_ref(base, tf, sess, "hover", r#ref).await,
+        Cmd::Select { r#ref, value } => select_cmd(base, tf, sess, r#ref, value).await,
+        Cmd::Check { r#ref, checked } => check_cmd(base, tf, sess, r#ref, checked).await,
+        Cmd::Find { kind, query } => find_cmd(base, tf, sess, kind, query).await,
+        Cmd::Close => close_cmd(base, tf, sess).await,
     }
 }
 
@@ -176,16 +199,38 @@ async fn reload_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitCod
     Ok(ExitCode::SUCCESS)
 }
 
-async fn ensure_session(d: &Daemon) -> Result<String> {
-    let mut s = state::load()?;
-    if let Some(id) = &s.session_id {
-        // Confirm session still exists by attempting a tiny no-op snapshot
-        // call. If it 404s, allocate a new one.
-        let res = d.post(&format!("/sessions/{id}/snapshot")).send().await?;
-        if res.status() == reqwest::StatusCode::NOT_FOUND {
-            // fallthrough to create
-        } else {
+/// Is this session id still live on the daemon? Probes with a no-op
+/// snapshot call (404 == gone).
+async fn session_alive(d: &Daemon, id: &str) -> bool {
+    match d.post(&format!("/sessions/{id}/snapshot")).send().await {
+        Ok(res) => res.status() != reqwest::StatusCode::NOT_FOUND,
+        Err(_) => false,
+    }
+}
+
+/// Resolve which session a command should target. Order (first live wins):
+///   1. `--session` flag (one-shot override)
+///   2. `acb-cli use <sid>` pin
+///   3. last-used session in local state
+///   4. create a new session
+///
+/// Explicit-only model: we never auto-follow a daemon "active" session.
+async fn resolve_session(d: &Daemon, flag: &Option<String>) -> Result<String> {
+    if let Some(id) = flag {
+        if session_alive(d, id).await {
             return Ok(id.clone());
+        }
+        return Err(anyhow!("--session {id} is not a live session"));
+    }
+    let mut s = state::load()?;
+    if let Some(id) = s.pinned_session_id.clone() {
+        if session_alive(d, &id).await {
+            return Ok(id);
+        }
+    }
+    if let Some(id) = s.session_id.clone() {
+        if session_alive(d, &id).await {
+            return Ok(id);
         }
     }
     let v: Value = d.post("/sessions").send().await?.json().await?;
@@ -198,9 +243,74 @@ async fn ensure_session(d: &Daemon) -> Result<String> {
     Ok(id)
 }
 
-async fn open_cmd(base: String, token_file: Option<PathBuf>, url: String) -> Result<ExitCode> {
+async fn sessions_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let v: Value = d.get("/sessions").send().await?.json().await?;
+    let pinned = state::load()?.pinned_session_id;
+    let arr = v.as_array().cloned().unwrap_or_default();
+    if arr.is_empty() {
+        println!("(no sessions)");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for s in &arr {
+        let id = s["id"].as_str().unwrap_or("?");
+        let mark = if Some(id.to_string()) == pinned {
+            "*"
+        } else {
+            " "
+        };
+        println!(
+            "{mark} {id}  {}  {}",
+            s["title"].as_str().unwrap_or(""),
+            s["url"].as_str().unwrap_or("")
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn use_cmd(base: String, token_file: Option<PathBuf>, sid: String) -> Result<ExitCode> {
+    // Verify the session exists before pinning, so a typo fails loudly.
+    let d = Daemon::connect(base, token_file)?;
+    if !session_alive(&d, &sid).await {
+        eprintln!("no such session: {sid} (try `acb-cli sessions`)");
+        return Ok(ExitCode::from(1));
+    }
+    let mut s = state::load()?;
+    s.pinned_session_id = Some(sid.clone());
+    state::save(&s)?;
+    println!("pinned {sid}");
+    Ok(ExitCode::SUCCESS)
+}
+
+async fn unuse_cmd() -> Result<ExitCode> {
+    let mut s = state::load()?;
+    s.pinned_session_id = None;
+    state::save(&s)?;
+    println!("unpinned");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Session-level POST with no body (back / forward / reload).
+async fn action_session(
+    base: String,
+    token_file: Option<PathBuf>,
+    sess: Option<String>,
+    verb: &str,
+) -> Result<ExitCode> {
+    let d = Daemon::connect(base, token_file)?;
+    let id = resolve_session(&d, &sess).await?;
+    let res = d.post(&format!("/sessions/{id}/{verb}")).send().await?;
+    exit_from(res).await
+}
+
+async fn open_cmd(
+    base: String,
+    token_file: Option<PathBuf>,
+    sess: Option<String>,
+    url: String,
+) -> Result<ExitCode> {
+    let d = Daemon::connect(base, token_file)?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(&format!("/sessions/{id}/open"), &json!({"url": url}))
         .await?;
@@ -219,9 +329,13 @@ async fn open_cmd(base: String, token_file: Option<PathBuf>, url: String) -> Res
     Ok(ExitCode::SUCCESS)
 }
 
-async fn snapshot_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
+async fn snapshot_cmd(
+    base: String,
+    token_file: Option<PathBuf>,
+    sess: Option<String>,
+) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d.post(&format!("/sessions/{id}/snapshot")).send().await?;
     if !res.status().is_success() {
         eprintln!("snapshot failed: {}", res.text().await.unwrap_or_default());
@@ -246,11 +360,12 @@ async fn snapshot_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitC
 async fn action_ref(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     verb: &str,
     r#ref: String,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(&format!("/sessions/{id}/{verb}"), &json!({"ref": r#ref}))
         .await?;
@@ -260,12 +375,13 @@ async fn action_ref(
 async fn action_ref_text(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     verb: &str,
     r#ref: String,
     text: String,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(
             &format!("/sessions/{id}/{verb}"),
@@ -278,11 +394,12 @@ async fn action_ref_text(
 async fn press_cmd(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     r#ref: String,
     key: String,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(
             &format!("/sessions/{id}/press"),
@@ -295,11 +412,12 @@ async fn press_cmd(
 async fn select_cmd(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     r#ref: String,
     value: String,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(
             &format!("/sessions/{id}/select"),
@@ -312,11 +430,12 @@ async fn select_cmd(
 async fn check_cmd(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     r#ref: String,
     checked: bool,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let res = d
         .post_json(
             &format!("/sessions/{id}/check"),
@@ -329,11 +448,12 @@ async fn check_cmd(
 async fn find_cmd(
     base: String,
     token_file: Option<PathBuf>,
+    sess: Option<String>,
     kind: String,
     query: String,
 ) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let id = ensure_session(&d).await?;
+    let id = resolve_session(&d, &sess).await?;
     let body = json!({ "kind": kind, "query": query });
     let res = d.post_json(&format!("/sessions/{id}/find"), &body).await?;
     if !res.status().is_success() {
@@ -345,19 +465,36 @@ async fn find_cmd(
     Ok(ExitCode::SUCCESS)
 }
 
-async fn close_cmd(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
+async fn close_cmd(
+    base: String,
+    token_file: Option<PathBuf>,
+    sess: Option<String>,
+) -> Result<ExitCode> {
     let d = Daemon::connect(base, token_file)?;
-    let s = state::load()?;
-    let id = match s.session_id {
-        Some(id) => id,
+    // Resolve which session to close: explicit flag > pin > last-used.
+    // (Don't create one just to close it.)
+    let id = match &sess {
+        Some(id) => id.clone(),
         None => {
-            println!("no session to close");
-            return Ok(ExitCode::SUCCESS);
+            let s = state::load()?;
+            match s.pinned_session_id.or(s.session_id) {
+                Some(id) => id,
+                None => {
+                    println!("no session to close");
+                    return Ok(ExitCode::SUCCESS);
+                }
+            }
         }
     };
     let res = d.delete(&format!("/sessions/{id}")).send().await?;
+    // Clear any local pointers that referenced the closed session.
     let mut s = state::load()?;
-    s.session_id = None;
+    if s.session_id.as_deref() == Some(id.as_str()) {
+        s.session_id = None;
+    }
+    if s.pinned_session_id.as_deref() == Some(id.as_str()) {
+        s.pinned_session_id = None;
+    }
     state::save(&s)?;
     if res.status().is_success() {
         println!("closed {id}");

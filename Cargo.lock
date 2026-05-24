@@ -6,6 +6,7 @@ version = 4
 name = "acb-cli"
 version = "0.1.0"
 dependencies = [
+ "acb-daemon",
  "acb-policy",
  "anyhow",
  "assert_cmd",

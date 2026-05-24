@@ -8,7 +8,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CliState {
+    /// Last session the CLI created/used — fallback default when nothing
+    /// else is pinned or passed.
     pub session_id: Option<String>,
+    /// Session explicitly pinned via `acb-cli use <sid>`. Takes precedence
+    /// over `session_id`, letting the agent target a session the human
+    /// opened in the web UI (discovered via `acb-cli sessions`).
+    #[serde(default)]
+    pub pinned_session_id: Option<String>,
 }
 
 pub fn state_path() -> PathBuf {
