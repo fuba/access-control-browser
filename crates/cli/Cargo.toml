@@ -7,6 +7,10 @@ authors.workspace = true
 repository.workspace = true
 description = "Access-controlled browser CLI"
 
+[lib]
+name = "acb_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "acb-cli"
 path = "src/main.rs"
@@ -21,10 +25,11 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# Staging file for visudo-style `edit-config`; also used by the tests.
+tempfile = "3"
 
 [dev-dependencies]
 assert_cmd = "2"
-tempfile = "3"
 predicates = "3"
 # For the session-sharing integration test: spawn a real daemon in-process
 # and drive the acb-cli binary against it.

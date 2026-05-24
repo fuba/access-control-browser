@@ -250,6 +250,9 @@ policy switches, and validation rules.
 
 ```
 acb-cli validate <url>                 # offline check against ./config.yaml
+acb-cli edit-config                    # visudo-style edit: $EDITOR + validate + save
+acb-cli protect-config                 # lock config.yaml (root-owned + immutable)
+acb-cli unprotect-config               # undo protect-config
 acb-cli status                         # ping the daemon
 acb-cli config                         # show redacted policy + helper sha256
 acb-cli reload                         # nudge a manual policy reload
@@ -272,7 +275,42 @@ acb-cli close                          # close the resolved session
 
 `--base http://host:port`, `--token-file <path>`, and `--session <sid>`
 overrides are available on every command; `ACB_BASE`, `ACB_TOKEN`,
-`ACB_TOKEN_FILE`, and `ACB_SESSION` env vars work too.
+`ACB_TOKEN_FILE`, and `ACB_SESSION` env vars work too. The config-editing
+commands above take `-c/--config <path>` (or `ACB_CONFIG`).
+
+### Protecting the policy file from the agent
+
+`config.yaml` is the agent's single most powerful input: anything that can
+rewrite it can grant itself any URL or element class. The daemon's HTTP API
+has no policy-write endpoint, so the agent can't change the policy *through
+the browser* — but if the agent shares a filesystem with `config.yaml` (the
+common "coding agent in your repo" case), it could just edit the file.
+
+Lock it down once, then edit it through the wrapper (the `visudo` pattern):
+
+```bash
+acb-cli protect-config              # asks for your sudo/UAC password once
+# ...the agent can no longer modify config.yaml...
+acb-cli edit-config                 # opens $EDITOR, validates, re-locks, reloads
+```
+
+- **What it does.** `protect-config` makes the file root-owned and immutable
+  (`chattr +i` on Linux, `chflags schg` on macOS, NTFS ACLs on Windows).
+  `edit-config` stages a copy, runs `$EDITOR`, **rejects invalid policy with
+  the same loader the daemon uses** (your edits are kept in a temp file on
+  failure), then re-applies the lock and nudges a hot reload.
+- **The guarantee, stated honestly.** This converts "modify the policy" into
+  "obtain root/admin", which requires the human's password. It protects you
+  **only if the agent cannot non-interactively become root** — i.e. you are
+  *not* using passwordless (`NOPASSWD`) sudo and the agent does *not* run as
+  root/Administrator. On a default install that holds.
+- **Docker.** The compose file already bind-mounts `config.yaml` read-only
+  into the container; `protect-config`/`edit-config` protect the *host* side.
+  They compose.
+- **Windows / WSL caveat.** `chattr`/ownership only work on a real Linux
+  filesystem. If your `config.yaml` lives on a Windows drive mounted into WSL
+  (`/mnt/c/...`), keep it in the WSL ext4 filesystem instead, or run the
+  commands from native Windows (PowerShell) so the NTFS-ACL path is used.
 
 ### Operating the tab a human opened in the web UI
 

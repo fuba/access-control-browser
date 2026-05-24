@@ -107,6 +107,13 @@ backwards-compatible default `--config ./config.yaml` still puts
 `./logs/` and `./var/` next to the config file (which in that case is
 also next to your CWD).
 
+To make the "root-owned, read-only for the daemon user" layout above
+actually enforceable against the agent, lock the file with
+`acb-cli protect-config` and edit it through `acb-cli edit-config`
+(validates before saving, then re-locks). See
+[security-model.md §7](./security-model.md) and the "Protecting the
+policy file" section of [usage.md](./usage.md).
+
 ## Etag
 
 On load the file's raw bytes are SHA-256'd; the hash appears as `etag`
