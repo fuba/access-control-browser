@@ -36,9 +36,11 @@ docker exec acb acb-cli open https://github.com/   # from the CLI
 
 ## Status
 
-v0.2.x. Daemon, CLI, UI, policy, and a live viewport with operator
-mouse + keyboard + Japanese IME input are working end-to-end.
-Windows-native `.exe` is deferred to v0.3.
+v0.4.x. Daemon, CLI, policy, and a browser-like web UI (multi-tab,
+back/forward/reload, scroll, live location bar, operator mouse +
+keyboard + Japanese IME). The CLI agent can drive the same session a
+human opened in the UI via `acb-cli sessions` + `use`/`--session`.
+Windows-native `.exe` is still deferred.
 
 ## License
 

@@ -253,7 +253,11 @@ acb-cli validate <url>                 # offline check against ./config.yaml
 acb-cli status                         # ping the daemon
 acb-cli config                         # show redacted policy + helper sha256
 acb-cli reload                         # nudge a manual policy reload
-acb-cli open <url>                     # create / reuse a session and navigate
+acb-cli sessions                       # list live sessions (id/url/title), * = pinned
+acb-cli use <sid>                      # pin a session for subsequent commands
+acb-cli unuse                          # clear the pin
+acb-cli open <url>                     # navigate the (resolved) session
+acb-cli back | forward | reload-page   # history navigation
 acb-cli snapshot                       # list accessible @eN refs
 acb-cli click <@eN>                    # click an element
 acb-cli fill <@eN> <text>              # fill a form field
@@ -263,12 +267,33 @@ acb-cli hover <@eN>                    # mouse-hover
 acb-cli select <@eN> <value>           # pick a <select> option
 acb-cli check <@eN> <true|false>       # set a checkbox / radio
 acb-cli find role|text <query>         # accessibility-restricted search
-acb-cli close                          # close the current session
+acb-cli close                          # close the resolved session
 ```
 
-`--base http://host:port` and `--token-file <path>` overrides are
-available on every command; `ACB_BASE`, `ACB_TOKEN`, and
-`ACB_TOKEN_FILE` env vars work too.
+`--base http://host:port`, `--token-file <path>`, and `--session <sid>`
+overrides are available on every command; `ACB_BASE`, `ACB_TOKEN`,
+`ACB_TOKEN_FILE`, and `ACB_SESSION` env vars work too.
+
+### Operating the tab a human opened in the web UI
+
+The web UI and the CLI agent are separate clients of the same daemon, so
+the agent targets a session **explicitly** (no auto-follow). To drive the
+exact tab a human is viewing:
+
+```bash
+acb-cli sessions            # find the tab — shows id, title, url
+acb-cli use s_<id>          # pin it (or pass --session s_<id> per command)
+acb-cli snapshot            # now operates that tab
+```
+
+Each tab in the web UI has a ⧉ button that copies its session id, and
+`acb-cli sessions` lists the same ids — either path hands the agent the
+id. Session resolution order: `--session` flag > `use` pin > last-used >
+create new.
+
+The session resolution applies to every page command, so the agent and
+the human can also work different tabs concurrently by pinning different
+ids.
 
 ## Troubleshooting
 

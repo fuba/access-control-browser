@@ -7,9 +7,13 @@ endpoint except `/healthz`. SSE accepts `?token=` as a fallback because
 ```
 GET    /healthz                          unauth, returns x-acb:1 header
 GET    /config                           redacted policy summary
+GET    /sessions                         list sessions [{id,url,title,created_at}]
 POST   /sessions                         create a new browser session
 DELETE /sessions/:id                     close session
 POST   /sessions/:id/open  {url}         navigate (re-validates URL)
+POST   /sessions/:id/back                history back (pre-validates entry URL)
+POST   /sessions/:id/forward             history forward (pre-validates entry URL)
+POST   /sessions/:id/reload              reload current page
 POST   /sessions/:id/snapshot            policy-filtered DOM with @eN refs
 POST   /sessions/:id/click   {ref}
 POST   /sessions/:id/fill    {ref,text}
@@ -25,6 +29,15 @@ POST   /admin/reload                     manual policy reload
 GET    /                                 embedded Next.js UI
 GET    /*                                static UI assets
 ```
+
+`back` / `forward` pre-validate the destination history entry's URL with
+the allowlist and return **403** if it's no longer allowed — the Fetch
+interceptor alone can't gate history navigation because Chromium may
+restore a cached document before the network request fires.
+
+The SSE `/events` feed includes a `session_url` event
+(`{session, url, title}`) emitted on navigation / title change, which the
+UI uses to keep the location bar and tab labels live.
 
 ## `/sessions/:id/viewport` WS
 
