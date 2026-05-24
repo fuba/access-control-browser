@@ -17,12 +17,14 @@ type SnapshotItem = {
   href: string | null;
 };
 
-type FeedEvent =
-  | { type: "navigated"; ts: number; session: string; url: string; rule: string }
-  | { type: "blocked"; ts: number; session: string; url: string; reason: string; kind: string }
-  | { type: "policy_reloaded"; ts: number; etag: string }
-  | { type: "policy_reload_failed"; ts: number; error: string }
-  | { type: string; [k: string]: unknown };
+type SessionInfo = {
+  id: string;
+  url: string | null;
+  title: string | null;
+  created_at: number;
+};
+
+type FeedEvent = { type: string; [k: string]: unknown };
 
 function getToken(): string {
   // Token is read from a query string `?token=...` so the operator can paste
@@ -42,14 +44,35 @@ async function authFetch(token: string, path: string, init?: RequestInit) {
   });
 }
 
+function tabLabel(s: SessionInfo): string {
+  if (s.title && s.title.trim()) return s.title;
+  if (s.url && s.url.trim()) {
+    try {
+      return new URL(s.url).host || s.url;
+    } catch {
+      return s.url;
+    }
+  }
+  return s.id.slice(0, 10);
+}
+
 export default function Home() {
   const [token, setToken] = useState("");
   const [cfg, setCfg] = useState<ConfigSummary | null>(null);
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [url, setUrl] = useState("");
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [loc, setLoc] = useState("");
   const [snap, setSnap] = useState<SnapshotItem[]>([]);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [validation, setValidation] = useState<ValidateResult | null>(null);
+
+  // Refs so async callbacks / SSE handlers read the latest values without
+  // re-subscribing (and to avoid stale-closure session races).
+  const activeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+  const locFocused = useRef(false);
 
   useEffect(() => {
     setToken(getToken());
@@ -63,56 +86,111 @@ export default function Home() {
       .catch(() => setCfg(null));
   }, [token]);
 
+  const refreshSessions = useCallback(async () => {
+    if (!token) return;
+    const r = await authFetch(token, "/sessions");
+    if (!r.ok) return;
+    const list: SessionInfo[] = await r.json();
+    setSessions(list);
+    // Pick an active tab if we don't have a (still-valid) one.
+    const cur = activeIdRef.current;
+    if (!cur || !list.some((s) => s.id === cur)) {
+      const next = list[0]?.id ?? null;
+      setActiveId(next);
+      const u = list.find((s) => s.id === next)?.url ?? "";
+      setLoc(u || "");
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) refreshSessions();
+  }, [token, refreshSessions]);
+
+  // SSE: live activity + session/url updates.
   useEffect(() => {
     if (!token) return;
     const es = new EventSource(`/events?token=${encodeURIComponent(token)}`);
     es.onmessage = (e) => {
+      let ev: FeedEvent;
       try {
-        const ev = JSON.parse(e.data) as FeedEvent;
-        setFeed((f) => [...f.slice(-200), ev]);
+        ev = JSON.parse(e.data) as FeedEvent;
       } catch {
-        /* ignore */
+        return;
+      }
+      setFeed((f) => [...f.slice(-200), ev]);
+      if (ev.type === "session_opened" || ev.type === "session_closed") {
+        refreshSessions();
+      } else if (ev.type === "session_url") {
+        const sid = ev.session as string;
+        const url = (ev.url as string) || "";
+        const title = (ev.title as string | null) ?? null;
+        setSessions((list) =>
+          list.map((s) => (s.id === sid ? { ...s, url, title } : s))
+        );
+        // Reflect the navigated URL in the location bar of the active tab,
+        // unless the operator is mid-edit.
+        if (sid === activeIdRef.current && !locFocused.current) {
+          setLoc(url);
+        }
       }
     };
     return () => es.close();
-  }, [token]);
+  }, [token, refreshSessions]);
 
   useEffect(() => {
-    if (!cfg) {
+    if (!cfg || !loc.trim()) {
       setValidation(null);
       return;
     }
-    if (!url.trim()) {
-      setValidation(null);
-      return;
-    }
-    setValidation(validateUrl(url.trim(), cfg));
-  }, [url, cfg]);
+    setValidation(validateUrl(loc.trim(), cfg));
+  }, [loc, cfg]);
 
-  // Mirror sessionId into a ref so async callbacks read the latest value
-  // even if they were scheduled (e.g. setTimeout) before the matching
-  // setSessionId re-render landed. Without this, a click->open->snapshot
-  // sequence races: takeSnapshot's stale closure sees sessionId=null,
-  // calls ensureSession again, and creates a second session that the
-  // Viewport WS then subscribes to — leaving the first (Yahoo-loaded)
-  // session orphaned and showing a blank tab in the UI.
-  const sessionIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
-
-  const ensureSession = useCallback(async () => {
-    if (sessionIdRef.current) return sessionIdRef.current;
+  const ensureActive = useCallback(async (): Promise<string | null> => {
+    if (activeIdRef.current) return activeIdRef.current;
     const r = await authFetch(token, "/sessions", { method: "POST" });
     if (!r.ok) return null;
     const v = await r.json();
-    sessionIdRef.current = v.id;
-    setSessionId(v.id);
+    activeIdRef.current = v.id;
+    setActiveId(v.id);
+    await refreshSessions();
     return v.id as string;
-  }, [token]);
+  }, [token, refreshSessions]);
+
+  const newTab = useCallback(async () => {
+    const r = await authFetch(token, "/sessions", { method: "POST" });
+    if (!r.ok) return;
+    const v = await r.json();
+    activeIdRef.current = v.id;
+    setActiveId(v.id);
+    setLoc("");
+    await refreshSessions();
+  }, [token, refreshSessions]);
+
+  const closeTab = useCallback(
+    async (id: string) => {
+      await authFetch(token, `/sessions/${id}`, { method: "DELETE" });
+      if (activeIdRef.current === id) {
+        activeIdRef.current = null;
+        setActiveId(null);
+      }
+      await refreshSessions();
+    },
+    [token, refreshSessions]
+  );
+
+  const switchTo = useCallback(
+    (id: string) => {
+      activeIdRef.current = id;
+      setActiveId(id);
+      const u = sessions.find((s) => s.id === id)?.url ?? "";
+      setLoc(u || "");
+      setSnap([]);
+    },
+    [sessions]
+  );
 
   const takeSnapshot = useCallback(async () => {
-    const id = sessionIdRef.current || (await ensureSession());
+    const id = activeIdRef.current;
     if (!id) return;
     const r = await authFetch(token, `/sessions/${id}/snapshot`, {
       method: "POST",
@@ -120,15 +198,15 @@ export default function Home() {
     if (!r.ok) return;
     const v = await r.json();
     setSnap(v.refs || []);
-  }, [ensureSession, token]);
+  }, [token]);
 
   const open = useCallback(async () => {
-    const id = await ensureSession();
+    const id = await ensureActive();
     if (!id) return;
     const r = await authFetch(token, `/sessions/${id}/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url.trim() }),
+      body: JSON.stringify({ url: loc.trim() }),
     });
     if (!r.ok) {
       const body = await r.text();
@@ -138,26 +216,31 @@ export default function Home() {
           type: "blocked",
           ts: Date.now() / 1000,
           session: id,
-          url,
+          url: loc,
           reason: body,
           kind: "open-rejected",
-        } as FeedEvent,
+        },
       ]);
     } else {
-      // small delay so the page has time to paint
       setTimeout(takeSnapshot, 500);
     }
-  }, [ensureSession, takeSnapshot, token, url]);
+  }, [ensureActive, takeSnapshot, token, loc]);
+
+  const nav = useCallback(
+    async (verb: "back" | "forward" | "reload") => {
+      const id = activeIdRef.current;
+      if (!id) return;
+      await authFetch(token, `/sessions/${id}/${verb}`, { method: "POST" });
+      setTimeout(takeSnapshot, 500);
+    },
+    [token, takeSnapshot]
+  );
 
   const submitDisabled = useMemo(
-    () => !cfg || !validation || !validation.ok || !url.trim(),
-    [cfg, validation, url]
+    () => !cfg || !validation || !validation.ok || !loc.trim(),
+    [cfg, validation, loc]
   );
-  const klass = !url
-    ? ""
-    : validation?.ok
-    ? "ok"
-    : "bad";
+  const klass = !loc ? "" : validation?.ok ? "ok" : "bad";
 
   if (!token) {
     return (
@@ -176,12 +259,71 @@ export default function Home() {
 
   return (
     <main className="app">
+      {/* Tab bar */}
+      <div className="tabbar">
+        {sessions.map((s) => (
+          <div
+            key={s.id}
+            className={"tab" + (s.id === activeId ? " active" : "")}
+            onClick={() => switchTo(s.id)}
+            title={s.url || s.id}
+          >
+            <span className="tab-label">{tabLabel(s)}</span>
+            <button
+              className="tab-copy"
+              title={`copy session id: ${s.id}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                navigator.clipboard?.writeText(s.id);
+              }}
+            >
+              ⧉
+            </button>
+            <button
+              className="tab-close"
+              title="close tab"
+              onClick={(e) => {
+                e.stopPropagation();
+                closeTab(s.id);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <button className="tab-new" title="new tab" onClick={newTab}>
+          +
+        </button>
+      </div>
+
+      {/* Nav controls + location bar */}
       <div className="topbar">
+        <button className="navbtn" title="back" onClick={() => nav("back")} disabled={!activeId}>
+          ‹
+        </button>
+        <button
+          className="navbtn"
+          title="forward"
+          onClick={() => nav("forward")}
+          disabled={!activeId}
+        >
+          ›
+        </button>
+        <button
+          className="navbtn"
+          title="reload"
+          onClick={() => nav("reload")}
+          disabled={!activeId}
+        >
+          ⟳
+        </button>
         <input
           className={klass}
           placeholder="https://github.com/..."
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
+          value={loc}
+          onChange={(e) => setLoc(e.target.value)}
+          onFocus={() => (locFocused.current = true)}
+          onBlur={() => (locFocused.current = false)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !submitDisabled) open();
           }}
@@ -189,19 +331,20 @@ export default function Home() {
         <button onClick={open} disabled={submitDisabled}>
           Open
         </button>
-        <button onClick={takeSnapshot} disabled={!sessionId}>
+        <button onClick={takeSnapshot} disabled={!activeId}>
           Snapshot
         </button>
       </div>
+
       <div className="body">
         <div className="viewport">
-          {sessionId ? (
-            <Viewport sessionId={sessionId} token={token} />
+          {activeId ? (
+            <Viewport sessionId={activeId} token={token} />
           ) : (
             <div className="placeholder">
               <p>
-                Type an allowed URL and press <kbd>Enter</kbd>. The live
-                viewport will appear here once a session is open.
+                Click <b>+</b> to open a tab, type an allowed URL, and press{" "}
+                <kbd>Enter</kbd>.
               </p>
               {cfg && (
                 <p>
@@ -234,22 +377,22 @@ export default function Home() {
                 .map((ev, i) => (
                   <div key={i}>
                     <span className="time">
-                      {new Date((ev as any).ts * 1000).toLocaleTimeString()}
+                      {new Date(((ev.ts as number) || 0) * 1000).toLocaleTimeString()}
                     </span>
                     <span
                       className={
                         ev.type === "blocked"
                           ? "b"
-                          : ev.type === "navigated"
+                          : ev.type === "navigated" || ev.type === "session_url"
                           ? "a"
                           : "r"
                       }
                     >
                       {ev.type}
                     </span>{" "}
-                    {(ev as any).url ||
-                      (ev as any).etag ||
-                      (ev as any).error ||
+                    {(ev.url as string) ||
+                      (ev.etag as string) ||
+                      (ev.error as string) ||
                       ""}
                   </div>
                 ))}

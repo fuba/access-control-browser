@@ -7,9 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use acb_daemon::events::ActivityEvent;
+use chromiumoxide::cdp::js_protocol::runtime::EvaluateParams;
 use serde_json::json;
-use tokio::time::timeout;
 
 use support::{fixture_policy, spawn_static, TestDaemon};
 
@@ -97,42 +96,48 @@ async fn back_to_disallowed_is_blocked() {
     let new_policy = build_policy(&regex_b_only);
     d.running.state.swap_policy(Arc::new(new_policy));
 
-    let mut feed = d.running.state.events().subscribe();
-
-    // Back -> A should be blocked by the interceptor.
-    d.client()
+    // Back -> A must be refused: the destination history entry's URL no
+    // longer passes the allowlist, so the handler returns 403 and never
+    // navigates (history nav can't rely on the Fetch interceptor — Chromium
+    // may restore the doc from cache before the network request). This is
+    // deterministic and load-insensitive (no polling / event races).
+    let res = d
+        .client()
         .post(format!("{}/sessions/{}/back", d.base, id))
         .bearer_auth(&d.token)
         .send()
         .await
         .unwrap();
-
-    // Generous timeout: the full suite runs many Chromium instances in
-    // parallel, so the back-nav → Fetch block → event cycle can be slow.
-    let blocked = timeout(Duration::from_secs(15), async {
-        loop {
-            match feed.recv().await {
-                Ok(ActivityEvent::Blocked { url, .. }) if url.contains("/page/a.html") => {
-                    return true
-                }
-                Ok(_) => continue,
-                Err(_) => return false,
-            }
-        }
-    })
-    .await
-    .unwrap_or(false);
-    assert!(
-        blocked,
-        "back to now-disallowed A must emit a Blocked event"
+    assert_eq!(
+        res.status(),
+        403,
+        "back to a now-disallowed history entry must be refused"
     );
 
-    // The page must NOT have become A.
+    // The page never left B, and current_url certainly is not A.
     tokio::time::sleep(Duration::from_millis(300)).await;
+    let session = d.running.state.get_session(&id).await.unwrap();
+    let body: serde_json::Value = session
+        .page
+        .execute(
+            EvaluateParams::builder()
+                .expression("document.body ? document.body.textContent : ''")
+                .return_by_value(true)
+                .build()
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .result
+        .result
+        .value
+        .clone()
+        .unwrap_or(serde_json::Value::Null);
     assert!(
-        !current_url(&d, &id).await.contains("/page/a.html"),
-        "page must not navigate to the disallowed A"
+        !body.as_str().unwrap_or("").contains("aaa"),
+        "disallowed page A must not be rendered"
     );
+    assert!(!current_url(&d, &id).await.contains("/page/a.html"));
 
     let _ = shutdown.send(());
     d.shutdown().await;

@@ -2,12 +2,13 @@
 // re-validate here (defense in depth: the agent never bypasses the
 // validator just because the Fetch interceptor would).
 //
-// back / forward / reload re-issue the page's existing history entry. We
-// deliberately do NOT validate_url in those handlers: the resulting
-// top-level Document load is re-paused by the Fetch interceptor and runs
-// through the same allowlist gate, so the URL policy still binds. Going
-// back to a now-disallowed URL is blocked there (and emits a Blocked
-// event) — acceptable and consistent with the security model.
+// back / forward pre-validate the destination history entry's URL with
+// validate_url and refuse (403) if it's no longer allowed. The Fetch
+// interceptor alone is NOT sufficient here: Chromium can restore a history
+// entry from its in-memory document cache before/instead of the network
+// request we intercept, so a policy change between first-visit and
+// going-back could otherwise leak a now-disallowed page. reload re-loads
+// the (already-allowed) current page, so the interceptor suffices there.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -120,7 +121,24 @@ async fn history_step(
         // At the start/end of history — nothing to do.
         return Ok(StatusCode::NO_CONTENT);
     }
-    let entry_id = hist.entries[target_index as usize].id;
+    let entry = &hist.entries[target_index as usize];
+
+    // Pre-validate the destination URL. Unlike a fresh `open`, a history
+    // navigation can be restored by Chromium from its in-memory document
+    // cache *before* (or instead of) issuing the network request the Fetch
+    // interceptor guards — so the interceptor is NOT a reliable chokepoint
+    // for back/forward. We must gate here: if the entry's URL no longer
+    // passes the allowlist (e.g. policy changed since it was first
+    // visited), refuse the navigation entirely.
+    let policy = state.policy();
+    if acb_policy::url_validator::validate_url(&entry.url, &policy).is_err() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            format!("history entry no longer allowed: {}", entry.url),
+        ));
+    }
+
+    let entry_id = entry.id;
     session
         .page
         .execute(NavigateToHistoryEntryParams { entry_id })

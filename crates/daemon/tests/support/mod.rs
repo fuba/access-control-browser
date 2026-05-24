@@ -52,6 +52,17 @@ impl TestDaemon {
     pub async fn shutdown(self) {
         let _ = self.running.shutdown.send(());
         let _ = self.running.join.await;
+        // Kill the Chromium tied to this test's unique profile dir. The
+        // daemon's per-session background tasks hold AppState (→
+        // Arc<Browser>) clones that aren't aborted here, so the Browser is
+        // never dropped and chromiumoxide (which only kills the child on
+        // drop) would otherwise leak the process — across a full suite that
+        // accumulates enough Chromium instances to starve the CPU and make
+        // timing-sensitive tests flaky.
+        let profile = self._profile.path().display().to_string();
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", &format!("user-data-dir={profile}")])
+            .status();
     }
 }
 
@@ -89,6 +100,12 @@ pub async fn spawn_static(
                             };
                             Response::builder()
                                 .header(header::CONTENT_TYPE, HeaderValue::from_static(ct))
+                                // no-store so back/forward always re-fetch
+                                // (and the Fetch interceptor always fires)
+                                // rather than being served from Chromium's
+                                // HTTP cache — keeps history-nav tests
+                                // deterministic.
+                                .header(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))
                                 .body(Body::from(bytes.clone()))
                                 .unwrap()
                         }

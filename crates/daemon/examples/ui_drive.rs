@@ -45,7 +45,10 @@ async fn main() -> anyhow::Result<()> {
     let js = format!(
         r#"(() => {{
             const input = document.querySelector('.topbar input');
-            const btn = document.querySelector('.topbar button');
+            // The topbar now also has back/forward/reload buttons, so
+            // select the Open button by its text rather than position.
+            const btn = Array.from(document.querySelectorAll('.topbar button'))
+              .find((b) => b.textContent.trim() === 'Open');
             if (!input || !btn) return 'no-topbar';
             const setter = Object.getOwnPropertyDescriptor(
               HTMLInputElement.prototype, 'value'

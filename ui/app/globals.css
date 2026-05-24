@@ -22,8 +22,71 @@ html, body {
 }
 .app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100vh;
+}
+.tabbar {
+  display: flex;
+  gap: 2px;
+  padding: 4px 8px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  align-items: flex-end;
+  overflow-x: auto;
+}
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tab.active {
+  color: var(--text);
+  background: var(--bg);
+  border-color: var(--accent);
+}
+.tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+.tab-copy,
+.tab-close,
+.tab-new {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 3px;
+  line-height: 1;
+}
+.tab-copy:hover,
+.tab-close:hover,
+.tab-new:hover {
+  color: var(--text);
+}
+.tab-new {
+  font-size: 16px;
+  padding: 0 8px;
+  align-self: center;
+}
+.navbtn {
+  padding: 0.4rem 0.6rem !important;
+  background: var(--bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--border) !important;
+  font-weight: 400 !important;
+  min-width: 32px;
 }
 .topbar {
   display: flex;

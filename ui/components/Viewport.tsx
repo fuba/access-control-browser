@@ -35,6 +35,7 @@ export function Viewport({
   const wsRef = useRef<WebSocket | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
+  const captureRef = useRef<HTMLDivElement | null>(null);
 
   const [wsState, setWsState] = useState<WsState>("connecting");
   const [frames, setFrames] = useState(0);
@@ -142,6 +143,36 @@ export function Viewport({
   function onContextMenu(e: React.MouseEvent) {
     e.preventDefault();
   }
+
+  // ---- Scroll: forward wheel deltas to the page. -----------------------
+  // Attached as a non-passive native listener (React's onWheel is passive,
+  // so preventDefault there is a no-op and the UI page itself would scroll
+  // instead of the embedded page).
+  useEffect(() => {
+    const el = captureRef.current;
+    if (!el) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const img = imgRef.current;
+      if (!img) return;
+      const r = img.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4) return;
+      const x = ((e.clientX - r.left) * pageWidth) / r.width;
+      const y = ((e.clientY - r.top) * pageHeight) / r.height;
+      send({
+        kind: "mouse",
+        type: "wheel",
+        x,
+        y,
+        delta_x: e.deltaX,
+        delta_y: e.deltaY,
+      });
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+    // send/imgRef are stable refs; pageWidth/Height are props.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageWidth, pageHeight]);
 
   // ---- Keyboard: forward when not in IME composition. ------------------
   function isComposing(e: React.KeyboardEvent) {
@@ -296,6 +327,7 @@ export function Viewport({
         {/* Pointer-event capture. Always on top so clicks register here;
             we forward focus to the textarea explicitly. */}
         <div
+          ref={captureRef}
           style={{ position: "absolute", inset: 0, cursor: "crosshair" }}
           onPointerDown={onPointerDown}
           onPointerUp={onPointerUp}
