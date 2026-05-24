@@ -1,10 +1,20 @@
 // `POST /sessions/:id/open` — navigate the session's page to a URL. We
 // re-validate here (defense in depth: the agent never bypasses the
 // validator just because the Fetch interceptor would).
+//
+// back / forward / reload re-issue the page's existing history entry. We
+// deliberately do NOT validate_url in those handlers: the resulting
+// top-level Document load is re-paused by the Fetch interceptor and runs
+// through the same allowlist gate, so the URL policy still binds. Going
+// back to a now-disallowed URL is blocked there (and emits a Blocked
+// event) — acceptable and consistent with the security model.
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use chromiumoxide::cdp::browser_protocol::page::{
+    GetNavigationHistoryParams, NavigateToHistoryEntryParams,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
@@ -52,4 +62,69 @@ pub async fn handler(
         url: req.url,
         rule: rule_name,
     }))
+}
+
+/// Step one entry back in the page's navigation history (no-op at the
+/// start). The history navigation re-fetches the entry, so the Fetch
+/// interceptor re-applies the allowlist.
+pub async fn back(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    history_step(&state, &id, -1).await
+}
+
+/// Step one entry forward in the page's navigation history (no-op at the end).
+pub async fn forward(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    history_step(&state, &id, 1).await
+}
+
+/// Reload the current page. The reload is a fresh top-level Document load,
+/// so the allowlist still binds via the interceptor.
+pub async fn reload(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let session = state
+        .get_session(&id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "no such session".into()))?;
+    session
+        .page
+        .clone()
+        .reload()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("reload: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn history_step(
+    state: &AppState,
+    id: &str,
+    delta: i64,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let session = state
+        .get_session(id)
+        .await
+        .ok_or((StatusCode::NOT_FOUND, "no such session".into()))?;
+    let hist = session
+        .page
+        .execute(GetNavigationHistoryParams::default())
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("history: {e}")))?;
+    let target_index = hist.current_index + delta;
+    if target_index < 0 || target_index as usize >= hist.entries.len() {
+        // At the start/end of history — nothing to do.
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    let entry_id = hist.entries[target_index as usize].id;
+    session
+        .page
+        .execute(NavigateToHistoryEntryParams { entry_id })
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, format!("navigate-history: {e}")))?;
+    Ok(StatusCode::NO_CONTENT)
 }

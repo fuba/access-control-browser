@@ -38,6 +38,17 @@ pub enum ActivityEvent {
         ts: u64,
         session: String,
     },
+    /// Live URL/title change for a session (top-level navigation, in-page
+    /// SPA route change, or title update). Drives the UI location bar and
+    /// tab labels without polling. Distinct from `Navigated`, which only
+    /// fires on allowlist-passing top-level document loads and carries the
+    /// matched rule.
+    SessionUrl {
+        ts: u64,
+        session: String,
+        url: String,
+        title: Option<String>,
+    },
 }
 
 pub fn now_unix() -> u64 {

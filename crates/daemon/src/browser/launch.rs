@@ -40,7 +40,10 @@ pub async fn launch(
     // Docker containers) makes Chromium abort with "No usable sandbox".
     // So these are written WITHOUT the leading dashes.
     let args = [
-        "disable-features=WebRTC,WebTransport,SharedArrayBuffer",
+        // BackForwardCache disabled so back/forward always re-fetch the
+        // document and the Fetch interceptor re-applies the allowlist —
+        // otherwise a bfcache restore would bypass policy on history nav.
+        "disable-features=WebRTC,WebTransport,SharedArrayBuffer,BackForwardCache",
         "disable-background-networking",
         "disable-component-update",
         "no-first-run",

@@ -12,9 +12,12 @@ pub fn router(state: AppState) -> Router {
     // Authenticated subtree.
     let protected = Router::new()
         .route("/config", get(config_route::handler))
-        .route("/sessions", post(sessions::create))
+        .route("/sessions", get(sessions::list).post(sessions::create))
         .route("/sessions/:id", delete(sessions::delete))
         .route("/sessions/:id/open", post(nav::handler))
+        .route("/sessions/:id/back", post(nav::back))
+        .route("/sessions/:id/forward", post(nav::forward))
+        .route("/sessions/:id/reload", post(nav::reload))
         .route("/sessions/:id/snapshot", post(actions::snapshot))
         .route("/sessions/:id/click", post(actions::click))
         .route("/sessions/:id/fill", post(actions::fill))

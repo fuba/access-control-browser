@@ -15,6 +15,31 @@ pub struct SessionCreated {
     pub id: String,
 }
 
+#[derive(Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub url: Option<String>,
+    pub title: Option<String>,
+    pub created_at: u64,
+}
+
+/// `GET /sessions` — list live sessions so the UI tab bar and
+/// `acb-cli sessions` can discover and target them. Sorted by created_at
+/// so tab order is stable.
+pub async fn list(State(state): State<AppState>) -> Json<Vec<SessionSummary>> {
+    let mut out = Vec::new();
+    for s in state.list_sessions().await {
+        out.push(SessionSummary {
+            id: s.id.clone(),
+            url: s.current_url.read().await.clone(),
+            title: s.title.read().await.clone(),
+            created_at: s.created_at,
+        });
+    }
+    out.sort_by_key(|s| s.created_at);
+    Json(out)
+}
+
 pub async fn create(
     State(state): State<AppState>,
 ) -> Result<Json<SessionCreated>, (StatusCode, String)> {

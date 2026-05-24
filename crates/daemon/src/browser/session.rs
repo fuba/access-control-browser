@@ -15,6 +15,12 @@ pub struct Session {
     /// Top-level page URL, updated on `Page.frameNavigated`. Used by the
     /// request interceptor to apply the inherit-page subresource rule.
     pub current_url: RwLock<Option<String>>,
+    /// Page title, updated from `Target.targetInfoChanged`. Surfaced by
+    /// `GET /sessions` and the `SessionUrl` activity event so the UI tab
+    /// bar / location bar can show a human-readable label.
+    pub title: RwLock<Option<String>>,
+    /// Unix seconds when this session was created.
+    pub created_at: u64,
     /// FrameId of the page's main frame. Discovered at session create
     /// via Page.getFrameTree and re-confirmed on every parent_id-less
     /// frame_navigated event. The request interceptor uses it to tell a
@@ -48,6 +54,8 @@ impl Session {
             id,
             page,
             current_url: RwLock::new(None),
+            title: RwLock::new(None),
+            created_at: crate::events::now_unix(),
             main_frame_id: RwLock::new(None),
             ref_table: RefTable::new(),
             viewport_frames: tx,

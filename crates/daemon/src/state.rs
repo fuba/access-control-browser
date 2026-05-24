@@ -91,6 +91,13 @@ impl AppState {
         self.inner.sessions.read().await.get(id).cloned()
     }
 
+    /// Snapshot of all live sessions. Used by `GET /sessions`. The returned
+    /// Arcs are cheap clones; reading per-session url/title is the caller's
+    /// job (each is behind its own RwLock).
+    pub async fn list_sessions(&self) -> Vec<Arc<Session>> {
+        self.inner.sessions.read().await.values().cloned().collect()
+    }
+
     pub async fn drop_session(&self, id: &str) -> bool {
         self.inner.sessions.write().await.remove(id).is_some()
     }

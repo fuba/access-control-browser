@@ -61,6 +61,7 @@ impl From<Button> for MouseButton {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn dispatch_mouse(
     page: &Page,
     kind: MouseKind,
@@ -69,12 +70,19 @@ pub async fn dispatch_mouse(
     button: Button,
     click_count: i64,
     modifiers: i64,
+    // Only meaningful for MouseKind::Wheel; ignored otherwise.
+    delta_x: f64,
+    delta_y: f64,
 ) -> Result<()> {
     let buttons_field = match (kind, button) {
         (MouseKind::Pressed, Button::Left) => Some(1),
         (MouseKind::Pressed, Button::Right) => Some(2),
         (MouseKind::Pressed, Button::Middle) => Some(4),
         _ => Some(0),
+    };
+    let (dx, dy) = match kind {
+        MouseKind::Wheel => (Some(delta_x), Some(delta_y)),
+        _ => (None, None),
     };
     page.execute(DispatchMouseEventParams {
         r#type: kind.into(),
@@ -90,8 +98,8 @@ pub async fn dispatch_mouse(
         tilt_x: None,
         tilt_y: None,
         twist: None,
-        delta_x: None,
-        delta_y: None,
+        delta_x: dx,
+        delta_y: dy,
         pointer_type: None,
     })
     .await?;

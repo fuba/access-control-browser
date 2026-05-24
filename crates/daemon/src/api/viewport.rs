@@ -192,12 +192,10 @@ async fn dispatch(session: &Arc<Session>, msg: InputMsg) -> anyhow::Result<()> {
                 button,
                 m.click_count,
                 m.modifiers,
+                m.delta_x,
+                m.delta_y,
             )
             .await?;
-            // Note: wheel deltas (m.delta_x/y) are ignored in v0.2's mouse
-            // implementation — CDP requires them on a separate path. Will
-            // add when needed.
-            let _ = (m.delta_x, m.delta_y);
         }
         InputMsg::Key(k) => {
             let down = match k.r#type.as_str() {

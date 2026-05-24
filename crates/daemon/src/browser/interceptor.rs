@@ -30,7 +30,9 @@ use chromiumoxide::cdp::browser_protocol::network::{
     ErrorReason, ResourceType, SetBypassServiceWorkerParams,
 };
 use chromiumoxide::cdp::browser_protocol::page::{EventFrameNavigated, GetFrameTreeParams};
-use chromiumoxide::cdp::browser_protocol::target::{CloseTargetParams, EventTargetCreated};
+use chromiumoxide::cdp::browser_protocol::target::{
+    CloseTargetParams, EventTargetCreated, EventTargetInfoChanged,
+};
 use futures::StreamExt;
 
 use crate::browser::session::Session;
@@ -88,18 +90,50 @@ pub async fn install(session: Arc<Session>, state: AppState) -> anyhow::Result<(
         *session.main_frame_id.write().await = Some(main_id);
     }
 
-    // Track frame navigations: keep current_url and the main frame id.
+    // Track frame navigations: always learn the main frame id; only adopt
+    // the URL into current_url when it passes the allowlist. A blocked /
+    // errored top-level navigation commits an error page (chrome-error://
+    // or the attempted URL) — we must NOT let that become current_url,
+    // both so the location bar stays on the last good page and so the
+    // subresource-inheritance check never inherits from a disallowed page.
     let mut navs = session.page.event_listener::<EventFrameNavigated>().await?;
     let s2 = session.clone();
+    let st2 = state.clone();
     let task2 = tokio::spawn(async move {
         while let Some(ev) = navs.next().await {
             if ev.frame.parent_id.is_none() {
-                *s2.current_url.write().await = Some(ev.frame.url.clone());
                 *s2.main_frame_id.write().await = Some(ev.frame.id.inner().clone());
+                adopt_url_if_allowed(&s2, &st2, &ev.frame.url).await;
             }
         }
     });
     session.push_task(task2).await;
+
+    // Track title via Target.targetInfoChanged — carries the page title
+    // without any scripting round-trip (so we never touch the JS-eval CDP
+    // surface the CI injection gate guards) and also fires on SPA
+    // title/route changes. URL adoption goes through the same allowlist
+    // guard as frameNavigated.
+    let browser_h = match state.browser_clone().await {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+    let mut tinfo = browser_h
+        .browser
+        .event_listener::<EventTargetInfoChanged>()
+        .await?;
+    let s_ti = session.clone();
+    let st_ti = state.clone();
+    let task_ti = tokio::spawn(async move {
+        while let Some(ev) = tinfo.next().await {
+            if ev.target_info.target_id.inner() != s_ti.page.target_id().inner() {
+                continue;
+            }
+            *s_ti.title.write().await = Some(ev.target_info.title.clone());
+            adopt_url_if_allowed(&s_ti, &st_ti, &ev.target_info.url).await;
+        }
+    });
+    session.push_task(task_ti).await;
 
     // Close popup targets whose URL is not allowed. Browser-level event.
     let browser = match state.browser_clone().await {
@@ -152,6 +186,29 @@ pub async fn install(session: Arc<Session>, state: AppState) -> anyhow::Result<(
     session.push_task(task3).await;
 
     Ok(())
+}
+
+/// Adopt `url` as the session's current_url and emit a `SessionUrl` event,
+/// but only if the URL passes the allowlist. Errors / blocked navigations
+/// (chrome-error://, attempted-but-blocked URLs) are ignored so the
+/// location bar stays on the last good page and subresource inheritance
+/// never keys off a disallowed page. Empty/about: URLs are skipped.
+async fn adopt_url_if_allowed(session: &Arc<Session>, state: &AppState, url: &str) {
+    if url.is_empty() {
+        return;
+    }
+    let policy = state.policy();
+    if acb_policy::url_validator::validate_url(url, &policy).is_err() {
+        return;
+    }
+    *session.current_url.write().await = Some(url.to_string());
+    let title = session.title.read().await.clone();
+    let _ = state.events().send(ActivityEvent::SessionUrl {
+        ts: now_unix(),
+        session: session.id.clone(),
+        url: url.to_string(),
+        title,
+    });
 }
 
 async fn classify(ev: &EventRequestPaused, session: &Session) -> RequestKind {
