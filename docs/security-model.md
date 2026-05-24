@@ -89,6 +89,7 @@ review.
 | WebRTC / WebTransport data channels | Chromium launched with `--disable-features=WebRTC,WebTransport,SharedArrayBuffer`. |
 | Unknown JSON fields slipping into a request body | Every request struct uses `#[serde(deny_unknown_fields)]`. |
 | Oversized text | 8 KiB cap on every `text` field handed to the helper. |
+| Rewriting `config.yaml` to self-authorize | No policy-write HTTP endpoint exists (`/config` is read-only; `/admin/reload` re-reads the file and takes no body). Filesystem tampering is out of the daemon's control — addressed by §7. |
 
 ### 5. Localhost-only auth (req §6)
 
@@ -109,6 +110,46 @@ review.
   use a coherent policy.
 - Malformed reload keeps the previous policy and emits
   `policy.reload_failed` on the SSE feed.
+
+### 7. Policy file integrity (operator trust boundary)
+
+The policy is authored by the trusted operator; the agent must not be able to
+edit it. Two layers, neither of which the daemon can enforce alone because the
+file lives on the host filesystem:
+
+- **No write path through the daemon.** The HTTP API is verb-based and has no
+  config-mutation endpoint. `GET /config` is read-only and redacted;
+  `POST /admin/reload` re-reads the on-disk path and accepts no body. So the
+  agent cannot change the policy *via the browser it drives*.
+- **Filesystem protection (`acb-cli protect-config` / `edit-config`).**
+  Because a coding agent often shares a filesystem with `config.yaml`, the
+  operator can lock the file: root-owned + immutable (`chattr +i` on Linux,
+  `chflags schg` on macOS, NTFS ACLs via `icacls` on Windows). The exact
+  per-OS command sequences are built and unit-tested in
+  `crates/cli/src/protect/specs.rs`. Edits go through a `visudo`-style wrapper
+  (`edit-config`) that validates with `acb_policy::load::load_policy` before
+  re-applying the lock.
+  - **Property guaranteed**: modifying the policy requires a human-gated
+    privilege escalation (sudo password / UAC). It is **not** effective if the
+    agent can become root non-interactively (`NOPASSWD` sudo, or the agent
+    running as root/Administrator) — documented as an operator precondition.
+  - **Defense in depth**: `compose.yml` bind-mounts the file `:ro`, so a
+    compromised in-container daemon also cannot rewrite it.
+  - **Detection**: `GET /config` exposes the policy `etag`; an unexpected
+    change is observable.
+  - **Parent-directory precondition**: the immutable flag protects the file's
+    bytes, not its directory entry. If the agent can write the *directory*
+    holding `config.yaml`, it can swap the entry or win a race during the
+    privileged write. Full protection therefore requires the file to live in a
+    directory the agent cannot write (e.g. a root-owned
+    `/etc/access-control-browser/`, the layout in
+    [config-schema.md](./config-schema.md)). `protect-config` warns when the
+    parent directory is writable by the invoking user.
+  - **No shell in the privileged/editor paths**: `$EDITOR` is split into
+    argv and executed directly (no `sh -c`), and the Windows elevation passes
+    every path as a PowerShell single-quoted literal (no `cmd /c` chain), so
+    spaces or metacharacters in paths cannot inject. (The Windows elevated
+    execution itself still needs verification on a real Windows host.)
 
 ## Known limitations
 

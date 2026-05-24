@@ -9,6 +9,7 @@ mod state;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use acb_cli::protect;
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -38,6 +39,23 @@ enum Cmd {
     /// Check whether a URL is allowed by the policy file (no daemon needed).
     Validate {
         url: String,
+        #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
+        config: PathBuf,
+    },
+    /// Edit config.yaml in $EDITOR, validate it, and save it back — even when
+    /// the file is root-protected (visudo-style). Invalid policy is rejected.
+    EditConfig {
+        #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
+        config: PathBuf,
+    },
+    /// Make config.yaml root-owned and immutable so the agent cannot rewrite
+    /// the policy. Requires the operator's sudo / UAC password.
+    ProtectConfig {
+        #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
+        config: PathBuf,
+    },
+    /// Remove the protection applied by `protect-config`.
+    UnprotectConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
     },
@@ -120,6 +138,9 @@ async fn run() -> Result<ExitCode> {
     let sess = cli.session;
     match cli.cmd {
         Cmd::Validate { url, config } => validate(url, config),
+        Cmd::EditConfig { config } => edit_config_cmd(base, tf, config).await,
+        Cmd::ProtectConfig { config } => protect_config_cmd(config),
+        Cmd::UnprotectConfig { config } => unprotect_config_cmd(config),
         Cmd::Status => status(base, tf).await,
         Cmd::Config => config_cmd(base, tf).await,
         Cmd::Reload => reload_cmd(base, tf).await,
@@ -158,6 +179,44 @@ fn validate(url: String, config: PathBuf) -> Result<ExitCode> {
             Ok(ExitCode::from(1))
         }
     }
+}
+
+async fn edit_config_cmd(
+    base: String,
+    token_file: Option<PathBuf>,
+    config: PathBuf,
+) -> Result<ExitCode> {
+    match protect::edit(&config)? {
+        protect::EditStatus::Unchanged => {
+            println!("no changes");
+            return Ok(ExitCode::SUCCESS);
+        }
+        protect::EditStatus::Saved => println!("saved {}", config.display()),
+    }
+    // Best-effort hot-reload nudge; the daemon's file watcher also catches it.
+    match Daemon::connect(base, token_file) {
+        Ok(d) => match d.post("/admin/reload").send().await {
+            Ok(res) if res.status().is_success() => {
+                let v: Value = res.json().await.unwrap_or_default();
+                println!("reloaded etag={}", v["etag"].as_str().unwrap_or("?"));
+            }
+            _ => println!("(saved; daemon will hot-reload on file change)"),
+        },
+        Err(_) => println!("(daemon not reachable; it will hot-reload on file change)"),
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn protect_config_cmd(config: PathBuf) -> Result<ExitCode> {
+    protect::protect(&config)?;
+    println!("protected {} (root-owned + immutable)", config.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn unprotect_config_cmd(config: PathBuf) -> Result<ExitCode> {
+    protect::unprotect(&config)?;
+    println!("unprotected {}", config.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 async fn status(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
