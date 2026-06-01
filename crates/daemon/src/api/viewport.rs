@@ -29,8 +29,10 @@ pub async fn handler(
 ) -> Result<Response, StatusCode> {
     let session = state.get_session(&id).await.ok_or(StatusCode::NOT_FOUND)?;
     // Start screencast if it isn't already. Subsequent subscribers share
-    // the broadcast channel.
-    screencast::ensure_started(&session, ScreencastConfig::default())
+    // the broadcast channel. Honour the operator's configured
+    // format / quality / fps instead of a hardcoded default.
+    let cfg = ScreencastConfig::from_policy(&state.policy().chromium.screencast);
+    screencast::ensure_started(&session, cfg)
         .await
         .map_err(|e| {
             warn!(error = ?e, "ensure_started failed");
