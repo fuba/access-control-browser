@@ -40,6 +40,8 @@ arc-swap = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
+# Fast non-cryptographic hash for per-frame dedupe in the screencast pump.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
 async-trait = "0.1"
@@ -55,3 +57,7 @@ tokio-tungstenite = "0.24"
 [[example]]
 name = "ui_drive"
 path = "examples/ui_drive.rs"
+
+[[example]]
+name = "screencast_spike"
+path = "examples/screencast_spike.rs"
