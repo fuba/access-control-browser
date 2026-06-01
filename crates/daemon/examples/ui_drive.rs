@@ -103,25 +103,22 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or("?")
     );
 
-    // Inspect the live-viewport <img> element to see whether the blob
-    // decoded into a real bitmap or stayed blank.
+    // Inspect the live-viewport <canvas> element to see whether a frame
+    // decoded into a real bitmap or it stayed blank.
     let inspect = page
         .execute(
             EvaluateParams::builder()
                 .expression(
                     r#"(() => {
-                        const img = document.querySelector('img[alt="live viewport"]');
-                        if (!img) return JSON.stringify({error: 'no-img'});
+                        const cv = document.querySelector('canvas[aria-label="live viewport"]');
+                        if (!cv) return JSON.stringify({error: 'no-canvas'});
                         return JSON.stringify({
-                            src_prefix: (img.src || '').slice(0, 80),
-                            complete: img.complete,
-                            naturalWidth: img.naturalWidth,
-                            naturalHeight: img.naturalHeight,
-                            currentSrc_prefix: (img.currentSrc || '').slice(0, 80),
-                            offsetWidth: img.offsetWidth,
-                            offsetHeight: img.offsetHeight,
-                            clientWidth: img.clientWidth,
-                            clientHeight: img.clientHeight
+                            backingWidth: cv.width,
+                            backingHeight: cv.height,
+                            offsetWidth: cv.offsetWidth,
+                            offsetHeight: cv.offsetHeight,
+                            clientWidth: cv.clientWidth,
+                            clientHeight: cv.clientHeight
                         });
                     })()"#,
                 )
@@ -141,26 +138,22 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or("<no-value>")
     );
 
-    // Sample 5 pixels from the actual <img> bitmap to find out whether
+    // Sample 5 pixels from the actual <canvas> bitmap to find out whether
     // the *image data* is white, or whether something is occluding it.
     let pixels = page
         .execute(
             EvaluateParams::builder()
                 .expression(
                     r#"(() => {
-                        const img = document.querySelector('img[alt="live viewport"]');
-                        if (!img || !img.complete || !img.naturalWidth) {
-                            return JSON.stringify({error: 'img-not-ready'});
+                        const cv = document.querySelector('canvas[aria-label="live viewport"]');
+                        if (!cv || !cv.width || !cv.height) {
+                            return JSON.stringify({error: 'canvas-not-ready'});
                         }
-                        const c = document.createElement('canvas');
-                        c.width = img.naturalWidth;
-                        c.height = img.naturalHeight;
-                        const ctx = c.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
+                        const ctx = cv.getContext('2d');
                         const pts = [
                             [10, 10],
-                            [img.naturalWidth/2|0, img.naturalHeight/2|0],
-                            [img.naturalWidth-10, img.naturalHeight-10],
+                            [cv.width/2|0, cv.height/2|0],
+                            [cv.width-10, cv.height-10],
                             [100, 100],
                             [400, 200],
                         ];
@@ -201,24 +194,24 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or("<no-value>")
     );
 
-    // Fetch the current blob URL and base64 it so we can inspect what
-    // the *UI* actually rendered (vs. what the WS sent on a separate
-    // subscribe).
+    // Encode the current canvas bitmap to PNG and base64 it so we can
+    // inspect what the *UI* actually rendered (vs. what the WS sent on a
+    // separate subscribe).
     let dump = page
         .execute(
             EvaluateParams::builder()
                 .expression(
                     r#"(async () => {
-                        const img = document.querySelector('img[alt="live viewport"]');
+                        const cv = document.querySelector('canvas[aria-label="live viewport"]');
                         try {
-                            const res = await fetch(img.src);
-                            const buf = await res.arrayBuffer();
+                            const blob = await new Promise((res) => cv.toBlob(res, 'image/png'));
+                            const buf = await blob.arrayBuffer();
                             const bytes = new Uint8Array(buf);
                             let s = '';
                             for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-                            return JSON.stringify({ok: true, len: bytes.length, b64: btoa(s), srcLen: img.src.length});
+                            return JSON.stringify({ok: true, len: bytes.length, b64: btoa(s)});
                         } catch (e) {
-                            return JSON.stringify({ok: false, err: String(e), src: img.src});
+                            return JSON.stringify({ok: false, err: String(e)});
                         }
                     })()"#,
                 )

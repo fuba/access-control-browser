@@ -339,7 +339,12 @@ export default function Home() {
       <div className="body">
         <div className="viewport">
           {activeId ? (
-            <Viewport sessionId={activeId} token={token} />
+            <Viewport
+              sessionId={activeId}
+              token={token}
+              pageWidth={cfg?.viewport?.width}
+              pageHeight={cfg?.viewport?.height}
+            />
           ) : (
             <div className="placeholder">
               <p>

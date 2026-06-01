@@ -31,10 +31,9 @@ export function Viewport({
   pageWidth = 1280,
   pageHeight = 800,
 }: Props) {
-  const imgRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
   const captureRef = useRef<HTMLDivElement | null>(null);
 
   const [wsState, setWsState] = useState<WsState>("connecting");
@@ -51,43 +50,60 @@ export function Viewport({
       token
     )}`;
     const ws = new WebSocket(url);
-    ws.binaryType = "blob";
+    // ArrayBuffer + createImageBitmap decodes off the main thread and draws
+    // straight to a <canvas> — no per-frame Blob URL churn (the old <img
+    // src=blob:...> path) and no GC pressure, which keeps a high frame rate
+    // smooth. createImageBitmap sniffs the format itself, so this works for
+    // jpeg / webp / png frames alike.
+    ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
     ws.onopen = () => setWsState("open");
     ws.onclose = () => setWsState("closed");
     ws.onerror = () => setWsState("error");
 
-    ws.onmessage = (ev) => {
-      if (!(ev.data instanceof Blob)) return;
-      // Binary WS frames arrive with Blob.type === "". Some browsers
-      // refuse to decode an <img src="blob:..."> URL without a sniff-able
-      // MIME (especially under headless / strict CSP), and the image
-      // renders as a blank box even though the bytes are a valid JPEG.
-      // Re-wrap with an explicit image/jpeg type so the browser always
-      // decodes.
-      const blob =
-        ev.data.type === "image/jpeg"
-          ? ev.data
-          : new Blob([ev.data], { type: "image/jpeg" });
-      const next = URL.createObjectURL(blob);
-      const img = imgRef.current;
-      if (img) {
-        const prev = blobUrlRef.current;
-        img.src = next;
-        if (prev) URL.revokeObjectURL(prev);
-        blobUrlRef.current = next;
-        setFrames((n) => n + 1);
-      } else {
-        URL.revokeObjectURL(next);
+    // Decode is async; serialize so frames never draw out of order. While a
+    // decode is in flight, keep only the newest pending frame (drop stale
+    // intermediates — under load we want the latest image, not a backlog).
+    let pending: ArrayBuffer | null = null;
+    let decoding = false;
+    let disposed = false;
+
+    async function drawLoop() {
+      if (decoding || pending == null) return;
+      decoding = true;
+      const data = pending;
+      pending = null;
+      try {
+        const bitmap = await createImageBitmap(new Blob([data]));
+        const cv = canvasRef.current;
+        if (!disposed && cv) {
+          if (cv.width !== bitmap.width || cv.height !== bitmap.height) {
+            cv.width = bitmap.width;
+            cv.height = bitmap.height;
+          }
+          const ctx = cv.getContext("2d");
+          ctx?.drawImage(bitmap, 0, 0);
+          setFrames((n) => n + 1);
+        }
+        bitmap.close();
+      } catch {
+        // Ignore a single undecodable frame; the next one will arrive.
       }
+      decoding = false;
+      if (!disposed && pending != null) drawLoop();
+    }
+
+    ws.onmessage = (ev) => {
+      if (!(ev.data instanceof ArrayBuffer)) return;
+      pending = ev.data;
+      drawLoop();
     };
 
     return () => {
+      disposed = true;
       ws.close();
       wsRef.current = null;
-      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
     };
   }, [sessionId, token]);
 
@@ -105,11 +121,11 @@ export function Viewport({
   // Important: scale on a rect width/height of at least 1 to avoid huge
   // coords before the first frame paints the <img>.
   function toPageCoords(e: React.PointerEvent | React.MouseEvent) {
-    const img = imgRef.current;
-    if (!img) return { x: 0, y: 0 };
-    const r = img.getBoundingClientRect();
+    const cv = canvasRef.current;
+    if (!cv) return { x: 0, y: 0 };
+    const r = cv.getBoundingClientRect();
     if (r.width < 4 || r.height < 4) {
-      // The <img> hasn't laid out yet; clicking would map to garbage.
+      // The <canvas> hasn't laid out yet; clicking would map to garbage.
       return { x: -1, y: -1 };
     }
     return {
@@ -153,9 +169,9 @@ export function Viewport({
     if (!el) return;
     const handler = (e: WheelEvent) => {
       e.preventDefault();
-      const img = imgRef.current;
-      if (!img) return;
-      const r = img.getBoundingClientRect();
+      const cv = canvasRef.current;
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
       if (r.width < 4 || r.height < 4) return;
       const x = ((e.clientX - r.left) * pageWidth) / r.width;
       const y = ((e.clientY - r.top) * pageHeight) / r.height;
@@ -284,9 +300,9 @@ export function Viewport({
         }}
         onContextMenu={onContextMenu}
       >
-        <img
-          ref={imgRef}
-          alt="live viewport"
+        <canvas
+          ref={canvasRef}
+          aria-label="live viewport"
           style={{
             position: "absolute",
             inset: 0,
@@ -295,7 +311,6 @@ export function Viewport({
             display: "block",
             objectFit: "contain",
           }}
-          draggable={false}
         />
         {/* IME / keyboard capture. pointer-events:none so the layer below
             still gets clicks; focus() is called programmatically. */}
