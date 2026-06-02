@@ -20,6 +20,39 @@ use crate::AppState;
 /// for the lifetime of the daemon.
 pub fn spawn(path: PathBuf, poll_ms: u64, state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        if poll_ms != 0 {
+            info!(path = ?path, poll_ms, "policy hot-reload watcher active (poll)");
+            poll_loop(path, poll_ms, state).await;
+            return;
+        }
+
+        // Watch the parent DIRECTORY and match events by file name, rather
+        // than watching the file itself. Two bugs this fixes:
+        //   * notify reports event paths in absolute form, so the old
+        //     `event_path == path` check never matched when the daemon was
+        //     launched with a relative `--config config.yaml`, and inotify
+        //     hot-reload silently never fired.
+        //   * editors (and our own tooling) save via write-temp + rename,
+        //     which swaps the file's inode; a watch on the file itself is
+        //     lost on the swap, while a watch on the directory still sees the
+        //     rename and we match the replacement by name.
+        let target = match path.canonicalize() {
+            Ok(p) => p,
+            Err(e) => {
+                error!(error = ?e, path = ?path, "cannot resolve policy path; falling back to poll loop");
+                poll_loop(path, 1000, state).await;
+                return;
+            }
+        };
+        let (dir, file_name) = match (target.parent(), target.file_name()) {
+            (Some(d), Some(n)) => (d.to_path_buf(), n.to_owned()),
+            _ => {
+                error!(path = ?target, "policy path has no parent/file name; falling back to poll loop");
+                poll_loop(path, 1000, state).await;
+                return;
+            }
+        };
+
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         let debouncer_timeout = Duration::from_millis(300);
         let mut debouncer = match new_debouncer(debouncer_timeout, None, move |res| {
@@ -31,31 +64,26 @@ pub fn spawn(path: PathBuf, poll_ms: u64, state: AppState) -> tokio::task::JoinH
                 return;
             }
         };
-        if poll_ms == 0 {
-            if let Err(e) = debouncer
-                .watcher()
-                .watch(&path, notify::RecursiveMode::NonRecursive)
-            {
-                error!(error = ?e, path = ?path, "failed to watch policy file (falling back to poll loop)");
-                // Fall back to a manual polling loop.
-                poll_loop(path, 1000, state).await;
-                return;
-            }
-            info!(path = ?path, "policy hot-reload watcher active (inotify)");
-            while let Some(res) = rx.recv().await {
-                if let Ok(events) = res {
-                    for e in events {
-                        for p in &e.paths {
-                            if p == &path {
-                                reload_once(&path, &state).await;
-                            }
-                        }
-                    }
+        if let Err(e) = debouncer
+            .watcher()
+            .watch(&dir, notify::RecursiveMode::NonRecursive)
+        {
+            error!(error = ?e, dir = ?dir, "failed to watch policy directory (falling back to poll loop)");
+            poll_loop(path, 1000, state).await;
+            return;
+        }
+        info!(path = ?target, "policy hot-reload watcher active (inotify, dir-watch)");
+        while let Some(res) = rx.recv().await {
+            if let Ok(events) = res {
+                let touched = events.iter().any(|e| {
+                    e.paths
+                        .iter()
+                        .any(|p| p.file_name() == Some(file_name.as_os_str()))
+                });
+                if touched {
+                    reload_once(&path, &state).await;
                 }
             }
-        } else {
-            info!(path = ?path, poll_ms, "policy hot-reload watcher active (poll)");
-            poll_loop(path, poll_ms, state).await;
         }
     })
 }
