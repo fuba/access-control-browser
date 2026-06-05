@@ -85,6 +85,94 @@ async fn spawn_with_file(yaml: &str) -> (RunningDaemon, String, NamedTempFile, t
     (running, token, f, profile)
 }
 
+/// Spawn the daemon with the policy file living in its own directory and the
+/// watcher in inotify mode (poll_ms = 0), so the test exercises the real
+/// filesystem-event path rather than the polling fallback.
+async fn spawn_inotify(
+    yaml: &str,
+) -> (
+    RunningDaemon,
+    String,
+    tempfile::TempDir,
+    std::path::PathBuf,
+    tempfile::TempDir,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("config.yaml");
+    std::fs::write(&cfg_path, yaml).unwrap();
+    let profile = tempfile::tempdir().unwrap();
+    let policy = Arc::new(acb_policy::load::load_policy(yaml).unwrap());
+    let token = auth::generate_token();
+    let cfg = StartConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        policy,
+        token: token.clone(),
+        token_path: None,
+        chrome_binary: None,
+        headless: true,
+        user_data_dir: Some(profile.path().to_path_buf()),
+    };
+    let running = start(cfg).await.expect("daemon start");
+    running.state.set_policy_path(cfg_path.clone()).await;
+    // poll_ms = 0 -> inotify dir-watch (the path the bug lived in).
+    drop(acb_daemon::reload::spawn(
+        cfg_path.clone(),
+        0,
+        running.state.clone(),
+    ));
+    // Return both tempdirs so the caller keeps them alive for the daemon's
+    // lifetime (dropping them mid-test would yank the profile / config dir).
+    (running, token, dir, cfg_path, profile)
+}
+
+async fn rule0_name(c: &reqwest::Client, base: &str, token: &str) -> String {
+    let v: serde_json::Value = c
+        .get(format!("{base}/config"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    v["rules"][0]["name"].as_str().unwrap_or("").to_string()
+}
+
+/// Wait until `/config`'s first rule name equals `want`, or fail after ~5s.
+async fn wait_rule0(c: &reqwest::Client, base: &str, token: &str, want: &str) {
+    for _ in 0..50 {
+        if rule0_name(c, base, token).await == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("policy did not hot-reload to rule '{want}' within timeout");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inotify_autoreload_on_inplace_write_and_atomic_rename() {
+    let (running, token, dir, cfg_path, _profile) = spawn_inotify(POLICY_A).await;
+    let base = format!("http://{}", running.addr);
+    let c = reqwest::Client::new();
+    assert_eq!(rule0_name(&c, &base, &token).await, "alpha");
+
+    // 1) In-place modify (truncate + write to the same inode).
+    std::fs::write(&cfg_path, POLICY_B).unwrap();
+    wait_rule0(&c, &base, &token, "beta").await;
+
+    // 2) Atomic rename (write a sibling temp file, rename over the config).
+    //    This swaps the inode — a watch on the file itself would miss it,
+    //    but the directory watch catches the rename. Regression guard for
+    //    editor-style saves.
+    let tmp = dir.path().join(".config.yaml.tmp");
+    std::fs::write(&tmp, POLICY_A).unwrap();
+    std::fs::rename(&tmp, &cfg_path).unwrap();
+    wait_rule0(&c, &base, &token, "alpha").await;
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn admin_reload_swaps_etag() {
     let (running, token, mut f, _profile) = spawn_with_file(POLICY_A).await;

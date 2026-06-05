@@ -7,6 +7,7 @@ Cargo.lock.bak
 /ui/node_modules
 /ui/.next
 /ui/out
+/ui/tsconfig.tsbuildinfo
 /crates/injected-js/node_modules
 
 # Logs and runtime

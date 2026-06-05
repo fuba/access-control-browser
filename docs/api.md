@@ -41,10 +41,15 @@ UI uses to keep the location bar and tab labels live.
 
 ## `/sessions/:id/viewport` WS
 
-Bidirectional. Server → client is binary JPEG frames (lazy-started at
-~6 fps via `Page.captureScreenshot`; cached most-recent frame is sent on
-connect so a fresh subscriber sees something immediately). Client →
-server is JSON with `kind`:
+Bidirectional. Server → client is binary image frames (JPEG/PNG/WebP per
+config). Lazy-started on the first subscriber. The default backend is
+`Page.startScreencast` — Chromium pushes a frame on every composite, so the
+stream is event-driven (up to ~60fps while the page animates, ~0 while it is
+static); set `ACB_CAPTURE_MODE=poll` for the portable `Page.captureScreenshot`
+fallback (which also enables WebP). Either way identical frames are deduped
+and the cached most-recent frame is sent on connect so a fresh subscriber sees
+something immediately. The UI decodes frames with `createImageBitmap` onto a
+`<canvas>`. Client → server is JSON with `kind`:
 
 | `kind` | fields |
 |---|---|

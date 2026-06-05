@@ -19,9 +19,9 @@ chromium:
     width: 1280
     height: 800
   screencast:
-    format: "jpeg"                 # jpeg | png
+    format: "webp"                 # webp (recommended) | jpeg | png
     quality: 70                    # 1..100
-    max_fps: 8
+    max_fps: 12                    # forward-rate cap (see note below)
   extra_args:                      # appended to Chromium command line
     - "--disable-features=WebRTC,WebTransport,SharedArrayBuffer"
     - "--disable-background-networking"
@@ -64,6 +64,30 @@ rules:
       schemes: ["http", "https"]   # default: any http/https
     allowed_classes: ["dashboard-panel"]
 ```
+
+## Viewport & screencast
+
+`viewport.width`/`height` are pinned onto the page at session create via
+`Emulation.setDeviceMetricsOverride`, so screencast frames render at exactly
+this size and the UI (which scales mouse coordinates against the same numbers,
+fetched from `GET /config`) maps clicks correctly. Change one and the other
+follows automatically.
+
+The live viewport has two capture backends, chosen by the `ACB_CAPTURE_MODE`
+environment variable:
+
+- **`screencast` (default)** — `Page.startScreencast`: Chromium *pushes* a
+  frame on every composite. Event-driven, up to ~60fps while the page
+  animates and ~0 work while it is static. JPEG/PNG only — a `webp` config is
+  served as JPEG in this mode. `max_fps` is an upper bound on the forward
+  rate (frames above it are dropped to cap bandwidth; every frame is still
+  acked so Chromium keeps producing).
+- **`poll`** — periodic `Page.captureScreenshot`. Portable fallback: supports
+  WebP, dedupes identical frames, and adapts cadence (`max_fps` while
+  changing, ~2fps once static). Higher CPU per frame and capped at `max_fps`.
+
+Both backends dedupe byte-identical frames and cache the most recent one, so a
+fresh WS subscriber to a static page still gets the current image immediately.
 
 ## Validation done at load
 

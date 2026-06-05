@@ -64,6 +64,9 @@ pub struct ScreencastConfig {
 pub enum ScreencastFormat {
     Jpeg,
     Png,
+    /// Recommended for the live viewport: same perceptual quality as JPEG at
+    /// ~25-35% smaller payload, so fewer bytes per frame over the WebSocket.
+    Webp,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

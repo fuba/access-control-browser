@@ -17,6 +17,15 @@ pub struct ConfigSummary {
     always_block_schemes: Vec<String>,
     subresources_inherit_page: bool,
     helper_sha256: &'static str,
+    /// Rendered viewport size. The UI scales mouse coordinates against this,
+    /// so it must match the size the daemon pins via setDeviceMetricsOverride.
+    viewport: ViewportSummary,
+}
+
+#[derive(Serialize)]
+pub struct ViewportSummary {
+    width: u32,
+    height: u32,
 }
 
 #[derive(Serialize)]
@@ -47,5 +56,9 @@ pub async fn handler(State(state): State<AppState>) -> Json<ConfigSummary> {
         always_block_schemes: p.resource_policy.always_block_schemes.clone(),
         subresources_inherit_page: p.resource_policy.subresources_inherit_page,
         helper_sha256: crate::browser::injected::helper_sha256(),
+        viewport: ViewportSummary {
+            width: p.chromium.viewport.width,
+            height: p.chromium.viewport.height,
+        },
     })
 }

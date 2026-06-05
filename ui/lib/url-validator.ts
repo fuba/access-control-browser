@@ -18,6 +18,9 @@ export type ConfigSummary = {
   always_block_schemes: string[];
   subresources_inherit_page: boolean;
   helper_sha256: string;
+  // Rendered viewport size the daemon pins Chromium to. The Viewport
+  // component scales mouse coordinates against this so clicks land right.
+  viewport: { width: number; height: number };
 };
 
 export type ValidateResult =

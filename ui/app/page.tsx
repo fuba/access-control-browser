@@ -65,6 +65,11 @@ export default function Home() {
   const [snap, setSnap] = useState<SnapshotItem[]>([]);
   const [feed, setFeed] = useState<FeedEvent[]>([]);
   const [validation, setValidation] = useState<ValidateResult | null>(null);
+  // True once any authed request comes back 401 — the token is missing,
+  // wrong, or stale (the daemon mints a fresh token on every restart). We
+  // surface this full-screen instead of rendering a UI whose every API call
+  // silently fails.
+  const [authFailed, setAuthFailed] = useState(false);
 
   // Refs so async callbacks / SSE handlers read the latest values without
   // re-subscribing (and to avoid stale-closure session races).
@@ -81,14 +86,27 @@ export default function Home() {
   useEffect(() => {
     if (!token) return;
     authFetch(token, "/config")
-      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setCfg)
+      .then((r) => {
+        if (r.status === 401) {
+          setAuthFailed(true);
+          return Promise.reject(401);
+        }
+        return r.ok ? r.json() : Promise.reject(r.status);
+      })
+      .then((c) => {
+        setAuthFailed(false);
+        setCfg(c);
+      })
       .catch(() => setCfg(null));
   }, [token]);
 
   const refreshSessions = useCallback(async () => {
     if (!token) return;
     const r = await authFetch(token, "/sessions");
+    if (r.status === 401) {
+      setAuthFailed(true);
+      return;
+    }
     if (!r.ok) return;
     const list: SessionInfo[] = await r.json();
     setSessions(list);
@@ -242,16 +260,62 @@ export default function Home() {
   );
   const klass = !loc ? "" : validation?.ok ? "ok" : "bad";
 
-  if (!token) {
+  if (!token || authFailed) {
+    const expired = authFailed;
     return (
       <main className="app">
-        <div style={{ padding: "2rem", maxWidth: 720 }}>
-          <h1>access-control-browser</h1>
-          <p>
-            Append <code>?token=&lt;your-token&gt;</code> to the URL. The token
-            is in <code>$XDG_RUNTIME_DIR/access-control-browser.token</code> on
-            the daemon host.
-          </p>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "2rem",
+            background: "var(--bg)",
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 560,
+              border: `1px solid ${expired ? "var(--bad)" : "var(--border)"}`,
+              borderRadius: 10,
+              padding: "1.5rem 1.75rem",
+              background: "var(--panel)",
+            }}
+          >
+            <h1 style={{ marginTop: 0, color: expired ? "var(--bad)" : undefined }}>
+              {expired ? "🔒 認証に失敗しました (401)" : "access-control-browser"}
+            </h1>
+            {expired ? (
+              <>
+                <p>
+                  トークンが無効か期限切れです。デーモンは<b>起動するたびに新しい
+                  トークンを生成する</b>ため、再起動後は URL のトークンが古くなります。
+                </p>
+                <p>
+                  ホスト上の最新トークンで開き直してください:
+                  <br />
+                  <code>
+                    {typeof window !== "undefined"
+                      ? `${window.location.origin}/?token=<最新トークン>`
+                      : "/?token=<最新トークン>"}
+                  </code>
+                </p>
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                  トークンは daemon ホストの{" "}
+                  <code>$XDG_RUNTIME_DIR/access-control-browser.token</code>{" "}
+                  （または <code>--token-file</code> で指定したパス）にあります。
+                </p>
+              </>
+            ) : (
+              <p>
+                URL に <code>?token=&lt;your-token&gt;</code> を付けてください。
+                トークンは daemon ホストの{" "}
+                <code>$XDG_RUNTIME_DIR/access-control-browser.token</code> にあります。
+              </p>
+            )}
+          </div>
         </div>
       </main>
     );
@@ -339,7 +403,12 @@ export default function Home() {
       <div className="body">
         <div className="viewport">
           {activeId ? (
-            <Viewport sessionId={activeId} token={token} />
+            <Viewport
+              sessionId={activeId}
+              token={token}
+              pageWidth={cfg?.viewport?.width}
+              pageHeight={cfg?.viewport?.height}
+            />
           ) : (
             <div className="placeholder">
               <p>

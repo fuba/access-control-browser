@@ -4,6 +4,7 @@
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use serde::Serialize;
 
 use crate::browser::{interceptor, session::Session};
@@ -59,6 +60,31 @@ pub async fn create(
         .new_page("about:blank")
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("new_page: {e}")))?;
+
+    // Pin the rendered viewport to the configured size. Without this Chromium
+    // renders at its own default window size, so screencast frame dimensions
+    // and the UI's coordinate scaling (which uses the same configured
+    // width/height) disagree and clicks land in the wrong place.
+    let vp = state.policy().chromium.viewport;
+    let metrics = SetDeviceMetricsOverrideParams::builder()
+        .width(vp.width as i64)
+        .height(vp.height as i64)
+        .device_scale_factor(1.0)
+        .mobile(false)
+        .build()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("metrics build: {e}"),
+            )
+        })?;
+    page.execute(metrics).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("set viewport: {e}"),
+        )
+    })?;
+
     let id = format!("s_{}", uuid_like());
     let session = Session::new(id.clone(), page);
     interceptor::install(session.clone(), state.clone())

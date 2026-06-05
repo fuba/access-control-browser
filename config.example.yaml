@@ -12,7 +12,11 @@ chromium:
   binary: null
   user_data_dir: "./var/profile"
   viewport: { width: 1280, height: 800 }
-  screencast: { format: "jpeg", quality: 70, max_fps: 8 }
+  # format: webp (recommended) | jpeg | png. webp is ~25-35% smaller than
+  # jpeg at the same quality, so fewer bytes per frame over the WebSocket.
+  # max_fps is the cadence while the page is changing; a static page is
+  # detected by frame dedupe and automatically drops to a 2fps idle tick.
+  screencast: { format: "webp", quality: 70, max_fps: 12 }
   extra_args:
     - "--disable-features=WebRTC,WebTransport,SharedArrayBuffer"
     - "--disable-background-networking"
