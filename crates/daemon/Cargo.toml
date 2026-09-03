@@ -51,6 +51,9 @@ mime_guess = "2"
 [dev-dependencies]
 reqwest = { workspace = true }
 tempfile = "3"
+# In-process signer for the signed-policy integration test.
+ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ed25519", "rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 pretty_assertions = "1"
 tokio-tungstenite = "0.24"
 

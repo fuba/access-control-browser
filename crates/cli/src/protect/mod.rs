@@ -6,6 +6,10 @@
 //! only through a wrapper that validates before installing. Modifying the
 //! policy then requires the human's sudo/UAC password, which an autonomous
 //! agent does not have.
+//!
+//! The root-free alternative (or complement) is a *signed* policy: the daemon
+//! runs with `--verify-key` and the wrapper signs every edit through
+//! `ssh-keygen -Y sign` (see [`crate::sign`]). Both can be active at once.
 
 mod specs;
 
@@ -22,7 +26,19 @@ pub enum EditStatus {
     /// The editor exited without changing the file.
     Unchanged,
     /// A validated new policy was written back.
-    Saved,
+    Saved {
+        /// The `revision` the saved policy carries, when it was signed.
+        signed_revision: Option<u64>,
+    },
+}
+
+/// Signing behaviour of [`edit`].
+#[derive(Debug, Clone, Default)]
+pub struct EditOptions {
+    /// Key for `ssh-keygen -Y sign -f` (private key file, or public key of an
+    /// agent-held key). When set, every save bumps `revision:` and installs
+    /// a fresh `<config>.sig` before the policy itself.
+    pub signing_key: Option<std::path::PathBuf>,
 }
 
 /// True if writing `path` needs elevated privileges (it is protected, or
@@ -56,7 +72,7 @@ pub fn unprotect(path: &Path) -> Result<()> {
 /// the real policy loader, and install it back — through the privileged path
 /// when the file is protected, or a plain write when it is not. Invalid YAML
 /// is never installed.
-pub fn edit(path: &Path) -> Result<EditStatus> {
+pub fn edit(path: &Path, opts: &EditOptions) -> Result<EditStatus> {
     let original = std::fs::read_to_string(path).unwrap_or_default();
     let dir = tempfile::tempdir().context("create staging dir")?;
     let staged = dir.path().join("config.yaml");
@@ -64,11 +80,41 @@ pub fn edit(path: &Path) -> Result<EditStatus> {
 
     run_editor(&resolve_editor(), &staged)?;
 
-    let edited = std::fs::read_to_string(&staged).context("read edited config")?;
+    let mut edited = std::fs::read_to_string(&staged).context("read edited config")?;
     if edited == original {
         return Ok(EditStatus::Unchanged);
     }
+
+    // A policy that is already signed must stay signed: writing an unsigned
+    // edit would only make the daemon refuse it (and keep the old policy),
+    // so refuse here instead, with the edits preserved.
+    let existing_sig = crate::sign::sig_path(path).exists();
+    if existing_sig && opts.signing_key.is_none() {
+        let recovery = keep_rejected(&edited);
+        bail!(
+            "{} is signed but no signing key was given; pass --signing-key or set ACB_SIGNING_KEY (your edits were kept at {})",
+            crate::sign::sig_path(path).display(),
+            recovery.display()
+        );
+    }
+
+    let mut signed_revision = None;
+    if opts.signing_key.is_some() {
+        let (bumped, rev) = crate::sign::bump_revision(&edited);
+        edited = bumped;
+        signed_revision = Some(rev);
+    }
     validate(&edited)?;
+
+    // Sign before installing the policy so that, whichever of the two writes
+    // the daemon's watcher sees last, the pair on disk is consistent by the
+    // time it loads. A signing failure (passphrase cancelled, no touch on the
+    // security key) leaves the old policy and signature untouched.
+    if let Some(key) = &opts.signing_key {
+        let pem = crate::sign::sign_bytes(edited.as_bytes(), key)?;
+        let sig = crate::sign::sig_path(path);
+        std::fs::write(&sig, pem).with_context(|| format!("write {}", sig.display()))?;
+    }
 
     if is_protected(path) {
         let abs = canonical(path)?;
@@ -85,21 +131,27 @@ pub fn edit(path: &Path) -> Result<EditStatus> {
     } else {
         std::fs::write(path, &edited).with_context(|| format!("write {}", path.display()))?;
     }
-    Ok(EditStatus::Saved)
+    Ok(EditStatus::Saved { signed_revision })
 }
 
 /// Validate a policy document with the same loader the daemon uses. On
 /// failure the rejected text is preserved so the operator does not lose work.
 fn validate(yaml: &str) -> Result<()> {
     if let Err(e) = acb_policy::load::load_policy(yaml) {
-        let recovery = std::env::temp_dir().join("acb-config.rejected.yaml");
-        let _ = std::fs::write(&recovery, yaml);
+        let recovery = keep_rejected(yaml);
         bail!(
             "edited config is INVALID, not saved: {e}\nyour edits were kept at {}",
             recovery.display()
         );
     }
     Ok(())
+}
+
+/// Park an edit we refuse to install where the operator can pick it up.
+fn keep_rejected(yaml: &str) -> std::path::PathBuf {
+    let recovery = std::env::temp_dir().join("acb-config.rejected.yaml");
+    let _ = std::fs::write(&recovery, yaml);
+    recovery
 }
 
 fn canonical(path: &Path) -> Result<std::path::PathBuf> {

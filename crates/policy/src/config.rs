@@ -7,6 +7,13 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyConfig {
+    /// Monotonic policy revision. Only meaningful for *signed* policies: a
+    /// daemon running with `--verify-key` refuses to hot-reload a policy
+    /// whose revision is lower than the one in effect, so an agent cannot
+    /// re-install an older (validly signed) file. `acb-cli edit-config`
+    /// bumps it automatically. Defaults to 0 (no replay protection).
+    #[serde(default)]
+    pub revision: u64,
     pub server: ServerConfig,
     pub chromium: ChromiumConfig,
     pub resource_policy: ResourcePolicy,

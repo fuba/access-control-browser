@@ -15,6 +15,11 @@ services:
       # Host-edits to config.yaml are picked up by the daemon's notify
       # watcher (or its poll fallback when host is macOS).
       - ./config.yaml:/app/config.yaml:ro
+      # Signed-policy mode: also mount the signature and the trusted public
+      # key(s), and set ACB_VERIFY_KEY below. The private key stays on the
+      # host (see docs/usage.md "Signing the policy file").
+      # - ./config.yaml.sig:/app/config.yaml.sig:ro
+      # - ./acb_policy.pub:/app/acb_policy.pub:ro
       - ./logs:/app/logs
       - acb-profile:/app/var/profile
     environment:
@@ -22,6 +27,7 @@ services:
       ACB_BIND: "0.0.0.0"
       ACB_PORT: "39100"
       ACB_HEADLESS: "true"
+      # ACB_VERIFY_KEY: /app/acb_policy.pub
     # Chromium runs with --no-sandbox; the container is the security
     # boundary. Do not grant SYS_ADMIN.
     restart: unless-stopped

@@ -25,6 +25,13 @@ pub enum ActivityEvent {
     PolicyReloaded {
         ts: u64,
         etag: String,
+        /// Revision field of the loaded policy (0 when unset).
+        #[serde(default)]
+        revision: u64,
+        /// SHA-256 fingerprint of the trusted key that signed the policy;
+        /// `None` when the daemon runs without `--verify-key`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signer: Option<String>,
     },
     PolicyReloadFailed {
         ts: u64,

@@ -3,3 +3,4 @@
 //! binary crate (`main.rs`).
 
 pub mod protect;
+pub mod sign;

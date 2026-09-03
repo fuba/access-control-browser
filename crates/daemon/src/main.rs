@@ -40,28 +40,45 @@ struct Cli {
     /// or /tmp/acb.token.
     #[arg(long, env = "ACB_TOKEN_FILE")]
     token_file: Option<PathBuf>,
+    /// Require the policy to be signed. Path to a file of OpenSSH public
+    /// keys (one per line, `id_*.pub` / `authorized_keys` shape) allowed to
+    /// sign it; `<config>.sig` must then be a valid `ssh-keygen -Y sign -n
+    /// acb-policy` signature over the exact file bytes, at startup and on
+    /// every reload. See docs/usage.md "Signing the policy file".
+    #[arg(long, env = "ACB_VERIFY_KEY")]
+    verify_key: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let yaml = std::fs::read_to_string(&cli.config)
-        .with_context(|| format!("read config {}", cli.config.display()))?;
-    // Resolve config-internal relative paths against the config file's
-    // parent. This lets the operator place /etc/acb/config.yaml outside
-    // the daemon's CWD (e.g. outside an LLM-agent sandbox) and still use
-    // relative log_file / user_data_dir paths that land alongside the
-    // config rather than inside the agent's writable area.
-    let config_dir = cli
-        .config
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    let policy = Arc::new(
-        acb_policy::load::load_policy_with_base(&yaml, Some(&config_dir))
-            .with_context(|| format!("invalid policy in {}", cli.config.display()))?,
-    );
+    // Trusted signing keys, if the operator turned verification on. Parsed
+    // before the policy so a bad key file is reported as such rather than as
+    // a signature failure.
+    let verify_keys = match &cli.verify_key {
+        Some(p) => {
+            let text = std::fs::read_to_string(p)
+                .with_context(|| format!("read verify key {}", p.display()))?;
+            Some(Arc::new(
+                acb_policy::sig::VerifyKeys::parse(&text)
+                    .with_context(|| format!("invalid verify key {}", p.display()))?,
+            ))
+        }
+        None => None,
+    };
+
+    // `policy_file::load` resolves config-internal relative paths against
+    // the config file's parent. This lets the operator place
+    // /etc/acb/config.yaml outside the daemon's CWD (e.g. outside an
+    // LLM-agent sandbox) and still use relative log_file / user_data_dir
+    // paths that land alongside the config rather than inside the agent's
+    // writable area. With verify keys set, an unsigned or badly signed
+    // policy is fatal here: the daemon never starts on a policy it would
+    // refuse to hot-reload.
+    let loaded = acb_daemon::policy_file::load(&cli.config, verify_keys.as_ref(), None)?;
+    let policy = Arc::new(loaded.policy);
+    let startup_signer = loaded.signer;
 
     // Initialize logging. File appender always; stderr only in foreground.
     let log_path = std::path::Path::new(&policy.server.log_file);
@@ -90,8 +107,17 @@ async fn main() -> Result<()> {
         config = %cli.config.display(),
         bind = %policy.server.bind,
         port = policy.server.port,
+        revision = policy.revision,
+        signature_required = verify_keys.is_some(),
+        signer = ?startup_signer.as_ref().map(|s| &s.fingerprint),
         "acb-daemon starting",
     );
+    if let Some(keys) = &verify_keys {
+        tracing::info!(
+            trusted_keys = ?keys.fingerprints(),
+            "policy signature verification is ON: on-disk edits need config.yaml.sig"
+        );
+    }
 
     let bind = cli
         .bind
@@ -116,6 +142,9 @@ async fn main() -> Result<()> {
     })
     .await?;
     running.state.set_policy_path(cli.config.clone()).await;
+    if let Some(keys) = verify_keys {
+        running.state.set_verify_keys(keys);
+    }
 
     let _reload_handle =
         acb_daemon::reload::spawn(cli.config.clone(), poll_ms, running.state.clone());

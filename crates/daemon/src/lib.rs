@@ -5,6 +5,7 @@ pub mod app;
 pub mod auth;
 pub mod browser;
 pub mod events;
+pub mod policy_file;
 pub mod reload;
 pub mod snapshot;
 pub mod state;

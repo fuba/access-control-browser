@@ -1,6 +1,11 @@
 # Example policy file. Copy to ./config.yaml and edit.
 # See docs/config-schema.md for the full schema.
 
+# Monotonic counter, only enforced for signed policies (daemon started with
+# --verify-key): a reload with a lower revision is refused, so an older
+# signed file cannot be replayed. `acb-cli edit-config --signing-key` bumps it.
+revision: 1
+
 server:
   bind: "127.0.0.1"
   port: 39100

@@ -5,6 +5,8 @@ reloads in place via the daemon's `notify` watcher (or a poll fallback on
 hosts where inotify doesn't propagate, e.g. macOS bind mounts).
 
 ```yaml
+revision: 12                       # optional; monotonic counter for signed policies
+
 server:
   bind: "127.0.0.1"                # 0.0.0.0 only with --insecure-bind
   port: 39100                      # port competition is fatal; do NOT renumber
@@ -137,6 +139,17 @@ actually enforceable against the agent, lock the file with
 (validates before saving, then re-locks). See
 [security-model.md §7](./security-model.md) and the "Protecting the
 policy file" section of [usage.md](./usage.md).
+
+## revision
+
+Optional top-level unsigned integer, default `0`. Meaningful only when the
+daemon runs with `--verify-key` (signed policy): a hot reload is refused if
+the offered policy's `revision` is lower than the one in effect, so a
+validly signed *older* file cannot be replayed by the agent. Equal
+revisions are accepted. `acb-cli edit-config --signing-key` inserts the
+field if missing and increments it on every save; when signing by hand
+with `ssh-keygen -Y sign`, bump it yourself. See
+[security-model.md §7](./security-model.md).
 
 ## Etag
 

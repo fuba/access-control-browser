@@ -12,6 +12,7 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use tokio::sync::{broadcast, RwLock};
 
+use acb_policy::sig::VerifyKeys;
 use acb_policy::CompiledPolicy;
 
 use crate::browser::launch::BrowserHandle;
@@ -26,6 +27,9 @@ pub struct AppState {
 struct Inner {
     pub policy: ArcSwap<CompiledPolicy>,
     pub policy_path: RwLock<Option<PathBuf>>,
+    /// Public keys allowed to sign the policy. `Some` = every load of the
+    /// on-disk policy (startup, hot reload, /admin/reload) must verify.
+    pub verify_keys: std::sync::RwLock<Option<Arc<VerifyKeys>>>,
     pub token: String,
     pub browser: RwLock<Option<BrowserHandle>>,
     pub sessions: RwLock<HashMap<String, Arc<Session>>>,
@@ -39,6 +43,7 @@ impl AppState {
             inner: Arc::new(Inner {
                 policy: ArcSwap::new(policy),
                 policy_path: RwLock::new(None),
+                verify_keys: std::sync::RwLock::new(None),
                 token,
                 browser: RwLock::new(None),
                 sessions: RwLock::new(HashMap::new()),
@@ -57,6 +62,23 @@ impl AppState {
             .try_read()
             .ok()
             .and_then(|g| g.clone())
+    }
+
+    /// Turn on signature verification for every subsequent policy load.
+    pub fn set_verify_keys(&self, keys: Arc<VerifyKeys>) {
+        *self
+            .inner
+            .verify_keys
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(keys);
+    }
+
+    pub fn verify_keys(&self) -> Option<Arc<VerifyKeys>> {
+        self.inner
+            .verify_keys
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn policy(&self) -> Arc<CompiledPolicy> {

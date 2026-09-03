@@ -109,6 +109,7 @@ fn compile(raw: PolicyConfig, etag: String) -> Result<CompiledPolicy, LoadError>
         resource_policy: raw.resource_policy,
         rules,
         etag,
+        revision: raw.revision,
     })
 }
 

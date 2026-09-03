@@ -89,7 +89,7 @@ review.
 | WebRTC / WebTransport data channels | Chromium launched with `--disable-features=WebRTC,WebTransport,SharedArrayBuffer`. |
 | Unknown JSON fields slipping into a request body | Every request struct uses `#[serde(deny_unknown_fields)]`. |
 | Oversized text | 8 KiB cap on every `text` field handed to the helper. |
-| Rewriting `config.yaml` to self-authorize | No policy-write HTTP endpoint exists (`/config` is read-only; `/admin/reload` re-reads the file and takes no body). Filesystem tampering is out of the daemon's control — addressed by §7. |
+| Rewriting `config.yaml` to self-authorize | No policy-write HTTP endpoint exists (`/config` is read-only; `/admin/reload` re-reads the file and takes no body). Filesystem tampering is addressed by §7: a filesystem lock, a signature requirement (`--verify-key`), or both. |
 
 ### 5. Localhost-only auth (req §6)
 
@@ -105,17 +105,21 @@ review.
 ### 6. Hot reload (req §1 + operator UX)
 
 - `notify-debouncer` watcher (with poll fallback for bind mounts on
-  hosts where inotify doesn't propagate).
+  hosts where inotify doesn't propagate). Both `config.yaml` and
+  `config.yaml.sig` are watched.
 - `ArcSwap<CompiledPolicy>` atomic swap ensures in-flight Fetch decisions
   use a coherent policy.
-- Malformed reload keeps the previous policy and emits
-  `policy.reload_failed` on the SSE feed.
+- Every load — startup, watcher, `/admin/reload` — goes through
+  `acb_daemon::policy_file::load`, the single place that verifies the
+  signature (when enabled) and checks the revision, so no path bypasses it.
+- Malformed reload, failed signature check or revision rollback keeps the
+  previous policy and emits `policy.reload_failed` on the SSE feed.
 
 ### 7. Policy file integrity (operator trust boundary)
 
 The policy is authored by the trusted operator; the agent must not be able to
-edit it. Two layers, neither of which the daemon can enforce alone because the
-file lives on the host filesystem:
+edit it. Three layers; the first is the daemon's own, the other two are
+alternatives (they compose) for the file that lives on the host filesystem:
 
 - **No write path through the daemon.** The HTTP API is verb-based and has no
   config-mutation endpoint. `GET /config` is read-only and redacted;
@@ -150,6 +154,46 @@ file lives on the host filesystem:
     every path as a PowerShell single-quoted literal (no `cmd /c` chain), so
     spaces or metacharacters in paths cannot inject. (The Windows elevated
     execution itself still needs verification on a real Windows host.)
+- **Signed policy (`acb-daemon --verify-key` / `acb-cli sign-config`).**
+  The root-free alternative. The daemon is given a file of trusted OpenSSH
+  public keys; it then loads `config.yaml` only if `config.yaml.sig` is a
+  valid **sshsig** (`ssh-keygen -Y sign`, namespace `acb-policy`) over the
+  exact bytes by one of those keys. Verification is `acb_policy::sig`
+  (pure, `ssh-key` crate: ed25519 and ECDSA P-256, which covers software
+  keys, FIDO2 `-sk` keys and Secure-Enclave/TPM keys via an agent).
+  - **Property guaranteed**: the daemon the operator started never loads a
+    policy the operator did not sign. Integrity/authenticity is what is
+    needed here, not confidentiality (`GET /config` and `acb-cli validate`
+    read the policy anyway), which is why this is a signature and not
+    encryption: the daemon needs no secret at all, so it starts unattended,
+    hot-reloads unattended, and runs in a container, while the *signing*
+    key can be gated by a human-presence check (FIDO2 touch, Touch ID via a
+    Secure-Enclave ssh-agent, `ssh-add -c` confirmation, or a passphrase).
+  - **Rollback guard**: the signed document carries a top-level
+    `revision:`; a reload is refused if it is lower than the revision in
+    effect. Equal is accepted (re-save). `edit-config` bumps it on every
+    signed save. The guard is in-memory: it protects a running daemon.
+  - **Parent-directory precondition disappears**: an agent that swaps the
+    directory entry only produces a file that fails verification, and the
+    previous policy stays in effect.
+  - **Preconditions**: the verify-key file and the daemon's launch
+    definition must not be agent-writable, and the agent must not be able
+    to restart the operator's daemon with other arguments — the same class
+    of assumption the filesystem lock makes (an agent could always run its
+    own `acb-daemon --config /tmp/x.yaml`). The signing key must not be
+    usable non-interactively by the agent: an unencrypted key file
+    protects nothing; a weak passphrase can be brute-forced offline; the
+    agent's terminal must not hold accessibility rights that let it click
+    through the agent/askpass/Touch ID prompts.
+  - **Write ordering**: `edit-config` and `sign-config` sign a staged copy
+    in a private temp dir (also avoiding `ssh-keygen`'s overwrite prompt),
+    install the signature first and the policy second, so the watcher's
+    final load always sees a consistent pair; a cancelled signature leaves
+    both files untouched. A policy that already has a `.sig` cannot be
+    saved unsigned by `edit-config` (the edit is parked, not installed).
+  - **Detection**: `policy.reloaded` events carry the signer's SHA-256
+    fingerprint and the revision; `GET /config` exposes
+    `signature_required` and `revision`.
 
 ## Known limitations
 
