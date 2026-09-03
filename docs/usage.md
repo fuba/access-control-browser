@@ -254,6 +254,7 @@ acb-cli edit-config                    # visudo-style edit: $EDITOR + validate +
                                        #   (--signing-key: also bump revision + re-sign)
 acb-cli sign-config --signing-key K    # write config.yaml.sig with `ssh-keygen -Y sign`
 acb-cli verify-config --verify-key P   # offline check of config.yaml.sig, as the daemon does
+acb-cli keygen --backend secure-enclave # macOS: create a Touch ID-gated signing key, print its .pub
 acb-cli status                         # ping the daemon
 acb-cli config                         # show redacted policy + helper sha256
 acb-cli reload                         # nudge a manual policy reload
@@ -303,6 +304,42 @@ is deliberate: OpenSSH is on every supported OS, and the key can sit behind
 whatever human-presence check your platform offers. The daemon never holds
 a secret — only public keys — so it starts unattended and works in Docker.
 
+#### macOS: Secure Enclave, zero install (recommended)
+
+On a Mac the signing key can live in the Secure Enclave, created by
+`acb-cli` itself with a user-presence rule: **every signature asks for
+Touch ID (or the login password)**, the private key never leaves the
+chip, and there is no file to copy and no dialog a shell can answer.
+Nothing else needs installing.
+
+```bash
+# 1. One-time: create the key and write its public half for the daemon.
+acb-cli keygen --backend secure-enclave --out ~/.config/acb/verify_keys
+
+# 2. Sign the current policy (Touch ID prompt).
+acb-cli sign-config --signing-key secure-enclave
+
+# 3. Start the daemon in verify mode (or set ACB_VERIFY_KEY).
+acb-daemon --config ./config.yaml --verify-key ~/.config/acb/verify_keys
+
+# 4. From now on, edit through the wrapper; it bumps `revision:` and re-signs.
+export ACB_SIGNING_KEY=secure-enclave
+acb-cli edit-config
+```
+
+`keygen` is idempotent (an existing key of the same `--label` is reused
+and its public key printed again), `--label` lets you keep several keys
+(`--signing-key secure-enclave:<label>`), and `--delete` removes one.
+Requirements: a Mac with a Secure Enclave (Apple Silicon or T2 — most
+VMs have none) and a code-signed `acb-cli`. Apple Silicon's linker
+ad-hoc-signs every binary, so a local `cargo build` normally qualifies; if
+key creation fails with an entitlement/signing error, run
+`codesign -s - $(which acb-cli)` and retry. This backend was written
+against Security.framework's documented behaviour and type-checked for
+macOS in CI; please report anything a real machine does differently.
+
+#### Any OS: an ssh-keygen key
+
 ```bash
 # 1. One-time: make a signing key (see "Choosing a key" below for options).
 ssh-keygen -t ed25519 -f ~/.ssh/acb_policy -C "acb policy signer"
@@ -338,13 +375,17 @@ acb-cli verify-config --verify-key ~/.ssh/acb_policy.pub
 - **Choosing a key — this is where the security comes from.** The
   guarantee is only as strong as "the agent cannot use the signing key
   without a human". Options, strongest first:
+  - **macOS Secure Enclave** (`--signing-key secure-enclave`, see above):
+    Touch ID / password on every signature, non-exportable key, nothing
+    to install.
   - **FIDO2 security key** (any OS): `ssh-keygen -t ed25519-sk` (or
     `ecdsa-sk`). Every signature needs a physical touch. Pass the
     resulting private-key *handle* file as `--signing-key`.
-  - **macOS Secure Enclave via an ssh-agent** such as
-    [Secretive](https://github.com/maxgoedjen/secretive): Touch ID on each
-    signature. Pass the key's `.pub` as `--signing-key`; `ssh-keygen` then
-    signs through the agent.
+  - **Secure Enclave via a third-party ssh-agent** such as
+    [Secretive](https://github.com/maxgoedjen/secretive) also works: pass
+    the key's `.pub` as `--signing-key` and `ssh-keygen` signs through the
+    agent. Only useful if you already run one; the native backend above
+    needs no agent.
   - **Agent with per-use confirmation** (Linux/macOS, plain OpenSSH):
     `ssh-add -c ~/.ssh/acb_policy` — each signature pops an askpass
     confirmation the agent cannot click. Pass the `.pub` as

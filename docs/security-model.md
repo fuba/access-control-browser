@@ -132,8 +132,13 @@ edit it. Two layers:
   `config.yaml.sig` is a valid **sshsig** (`ssh-keygen -Y sign`, namespace
   `acb-policy`) over the exact bytes by one of those keys. Verification is
   `acb_policy::sig` (pure, `ssh-key` crate: ed25519 and ECDSA P-256, which
-  covers software keys, FIDO2 `-sk` keys and Secure-Enclave/TPM keys via an
-  agent).
+  covers software keys, FIDO2 `-sk` keys and Secure-Enclave/TPM keys).
+  Two signers produce that envelope: `ssh-keygen -Y sign` (any key OpenSSH
+  can use) and, on macOS, `acb_cli::se` — a P-256 key generated in the
+  Secure Enclave with `kSecAccessControlUserPresence`, so
+  `SecKeyCreateSignature` itself triggers Touch ID / password and the
+  private key is non-exportable. The DER signature is re-encoded as
+  `ecdsa-sha2-nistp256` sshsig and self-verified before it is written.
   - **Property guaranteed**: the daemon the operator started never loads a
     policy the operator did not sign. Integrity/authenticity is what is
     needed here, not confidentiality (`GET /config` and `acb-cli validate`
@@ -158,7 +163,12 @@ edit it. Two layers:
     usable non-interactively by the agent: an unencrypted key file
     protects nothing; a weak passphrase can be brute-forced offline; the
     agent's terminal must not hold accessibility rights that let it click
-    through the agent/askpass/Touch ID prompts.
+    through the agent/askpass prompts (a Touch ID prompt cannot be
+    scripted, but the password fallback dialog is a system dialog like any
+    other). The Secure Enclave path additionally assumes the `acb-cli`
+    binary is code-signed and that the machine has an enclave; it is
+    type-checked for macOS in CI but the enclave interaction itself needs
+    real hardware to exercise.
   - **Write ordering**: `edit-config` and `sign-config` sign a staged copy
     in a private temp dir (also avoiding `ssh-keygen`'s overwrite prompt),
     install the signature first and the policy second (both via temp file +

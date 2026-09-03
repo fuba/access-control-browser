@@ -49,20 +49,44 @@ enum Cmd {
     EditConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
-        /// Key for `ssh-keygen -Y sign` (private key file, or the .pub of a
-        /// key held by ssh-agent / a security key). Required once the policy
-        /// has a config.yaml.sig.
+        /// Signing key: a path for `ssh-keygen -Y sign` (private key file, or
+        /// the .pub of a key held by ssh-agent / a security key), or
+        /// `secure-enclave[:label]` for a macOS Secure Enclave key made by
+        /// `acb-cli keygen`. Required once the policy has a config.yaml.sig.
         #[arg(long, env = "ACB_SIGNING_KEY")]
-        signing_key: Option<PathBuf>,
+        signing_key: Option<sign::SigningKey>,
     },
     /// Sign config.yaml as-is into config.yaml.sig with `ssh-keygen -Y sign`,
     /// for a daemon started with --verify-key. Does not touch the policy.
     SignConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
-        /// Key for `ssh-keygen -Y sign -f`.
+        /// Signing key: a path for `ssh-keygen -Y sign -f`, or
+        /// `secure-enclave[:label]` (macOS).
         #[arg(long, env = "ACB_SIGNING_KEY")]
-        signing_key: PathBuf,
+        signing_key: sign::SigningKey,
+    },
+    /// Create (or show) a policy signing key in the macOS Secure Enclave.
+    /// Every signature with it asks for Touch ID / the login password; the
+    /// private key never leaves the chip. Prints the OpenSSH public key line
+    /// for the daemon's --verify-key file. Idempotent: an existing key of
+    /// the same label is reused.
+    Keygen {
+        /// Key backend. Only `secure-enclave` (macOS) exists today; file,
+        /// agent and FIDO2 keys are made with `ssh-keygen` directly.
+        #[arg(long, value_parser = ["secure-enclave"])]
+        backend: String,
+        /// Key name; use with `--signing-key secure-enclave:<label>`.
+        #[arg(long, default_value = acb_cli::se::DEFAULT_LABEL)]
+        label: String,
+        /// Also write the public key line to this file (the daemon's
+        /// --verify-key). Appends when the file exists, so several operators'
+        /// keys can share one file.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Delete the key instead. Irreversible.
+        #[arg(long)]
+        delete: bool,
     },
     /// Check config.yaml.sig against a verify-key file, exactly as the daemon
     /// does at startup and on reload (no daemon needed).
@@ -162,6 +186,12 @@ async fn run() -> Result<ExitCode> {
             signing_key,
         } => sign_config_cmd(config, signing_key),
         Cmd::VerifyConfig { config, verify_key } => verify_config_cmd(config, verify_key),
+        Cmd::Keygen {
+            backend,
+            label,
+            out,
+            delete,
+        } => keygen_cmd(backend, label, out, delete),
         Cmd::Status => status(base, tf).await,
         Cmd::Config => config_cmd(base, tf).await,
         Cmd::Reload => reload_cmd(base, tf).await,
@@ -206,7 +236,7 @@ async fn edit_config_cmd(
     base: String,
     token_file: Option<PathBuf>,
     config: PathBuf,
-    signing_key: Option<PathBuf>,
+    signing_key: Option<sign::SigningKey>,
 ) -> Result<ExitCode> {
     let opts = edit::EditOptions { signing_key };
     match edit::edit(&config, &opts)? {
@@ -239,7 +269,7 @@ async fn edit_config_cmd(
     Ok(ExitCode::SUCCESS)
 }
 
-fn sign_config_cmd(config: PathBuf, signing_key: PathBuf) -> Result<ExitCode> {
+fn sign_config_cmd(config: PathBuf, signing_key: sign::SigningKey) -> Result<ExitCode> {
     let text = std::fs::read_to_string(&config)
         .with_context(|| format!("failed to read {}", config.display()))?;
     // Sign only what the daemon would accept; a broken file is caught here
@@ -256,6 +286,49 @@ fn sign_config_cmd(config: PathBuf, signing_key: PathBuf) -> Result<ExitCode> {
     }
     let sig = sign::sign(&config, &signing_key)?;
     println!("signed {} -> {}", config.display(), sig.display());
+    Ok(ExitCode::SUCCESS)
+}
+
+fn keygen_cmd(
+    backend: String,
+    label: String,
+    out: Option<PathBuf>,
+    delete: bool,
+) -> Result<ExitCode> {
+    debug_assert_eq!(backend, "secure-enclave");
+    if delete {
+        let key = acb_cli::se::open(&label)?;
+        key.delete()?;
+        println!("deleted Secure Enclave key {label:?}");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let (key, created) = acb_cli::se::ensure(&label)?;
+    let line = key.openssh_public_key()?;
+    if created {
+        eprintln!("created Secure Enclave key {label:?} (Touch ID / password required for every signature)");
+    } else {
+        eprintln!("Secure Enclave key {label:?} already exists; reusing it");
+    }
+    println!("{line}");
+    if let Some(out) = out {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&out)
+            .with_context(|| format!("open {}", out.display()))?;
+        writeln!(f, "{line}")?;
+        eprintln!("appended to {}", out.display());
+        eprintln!(
+            "next: acb-daemon --verify-key {}   and   acb-cli edit-config --signing-key secure-enclave{}",
+            out.display(),
+            if label == acb_cli::se::DEFAULT_LABEL {
+                String::new()
+            } else {
+                format!(":{label}")
+            }
+        );
+    }
     Ok(ExitCode::SUCCESS)
 }
 

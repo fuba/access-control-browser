@@ -59,6 +59,24 @@ jobs:
             exit 1
           fi
 
+  macos-cli:
+    # The Secure Enclave signing backend (crates/cli/src/se.rs) only compiles
+    # against Security.framework, so build and unit-test acb-cli on macOS.
+    # The enclave itself cannot be exercised here (no user presence on a
+    # runner); that path is verified on real hardware.
+    name: macOS build (acb-cli)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: cargo clippy (acb-cli)
+        run: cargo clippy -p acb-cli --all-targets -- -D warnings
+      - name: cargo test (acb-cli, no daemon)
+        run: cargo test -p acb-cli --lib --test edit_config_tests --test sign_config_tests --test validate
+
   docker-build:
     # On main / PR: build amd64+arm64 to verify the Dockerfile.
     # On a v* tag push: also push to ghcr.io with semver-derived tags.
