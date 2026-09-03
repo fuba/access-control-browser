@@ -72,6 +72,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Placeholder UI bundle
+        # acb-cli's tests link acb-daemon (dev-dependency), whose rust-embed
+        # macro requires ui/out to exist at compile time. These tests never
+        # serve the UI, so an empty directory stands in for the Next.js build.
+        run: mkdir -p ui/out
       - name: cargo clippy (acb-cli)
         run: cargo clippy -p acb-cli --all-targets -- -D warnings
       - name: cargo test (acb-cli, no daemon)
