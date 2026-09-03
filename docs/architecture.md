@@ -57,9 +57,10 @@
   `decide_request`, `allowed_classes_for`. No I/O, no async.
 - `acb-daemon` — axum HTTP layer + chromiumoxide CDP layer. Embeds the
   UI bundle via `rust-embed`.
-- `acb-cli` — clap CLI; reqwest client of the daemon. Also exposes a small
-  `acb_cli::protect` library (the `protect-config` / `edit-config`
-  policy-file locking, unit-tested per OS).
+- `acb-cli` — clap CLI; reqwest client of the daemon. Also exposes the
+  `acb_cli::edit` / `acb_cli::sign` library (the `edit-config` /
+  `sign-config` / `verify-config` policy-file signing, driven through
+  `ssh-keygen -Y sign`).
 - `crates/injected-js` — the fixed DOM helper, checked-in JS. SHA-256
   is computed at daemon startup and surfaced at `/config` for tampering
   detection.

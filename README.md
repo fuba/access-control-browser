@@ -40,13 +40,12 @@ Daemon, CLI, policy, and a browser-like web UI (multi-tab,
 back/forward/reload, scroll, live location bar, operator mouse +
 keyboard + Japanese IME). The CLI agent can drive the same session a
 human opened in the UI via `acb-cli sessions` + `use`/`--session`. The
-policy file can be locked against the agent with `acb-cli protect-config`
-(root-owned + immutable) or, without root, signed with
-`acb-cli sign-config` and enforced by `acb-daemon --verify-key` — the
-signature is `ssh-keygen -Y sign`, so the key can live behind a FIDO2
-touch, Touch ID (via a Secure-Enclave ssh-agent) or an `ssh-add -c`
-confirmation. Native Secure Enclave / Windows Hello signing backends and
-the Windows-native `.exe` are still deferred.
+policy file is protected against the agent by a signature, not by root:
+`acb-cli sign-config` / `edit-config` sign it with `ssh-keygen -Y sign`
+and `acb-daemon --verify-key` refuses anything else, so the key can live
+behind a FIDO2 touch, Touch ID (via a Secure-Enclave ssh-agent) or an
+`ssh-add -c` confirmation. Native Secure Enclave / Windows Hello signing
+backends and the Windows-native `.exe` are still deferred.
 
 ## License
 

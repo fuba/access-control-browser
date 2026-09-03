@@ -119,7 +119,7 @@ a single directory that's outside any LLM agent's writable area:
 
 ```
 /etc/access-control-browser/
-├── config.yaml          ← root-owned, read-only for the daemon user
+├── config.yaml          ← plus config.yaml.sig when the daemon runs --verify-key
 ├── logs/                ← log_file: "./logs/access-control-browser.log"
 └── var/profile/         ← user_data_dir: "./var/profile"
 ```
@@ -133,12 +133,12 @@ backwards-compatible default `--config ./config.yaml` still puts
 `./logs/` and `./var/` next to the config file (which in that case is
 also next to your CWD).
 
-To make the "root-owned, read-only for the daemon user" layout above
-actually enforceable against the agent, lock the file with
-`acb-cli protect-config` and edit it through `acb-cli edit-config`
-(validates before saving, then re-locks). See
-[security-model.md §7](./security-model.md) and the "Protecting the
-policy file" section of [usage.md](./usage.md).
+Placing the file outside the agent's working tree keeps it out of casual
+reach; what actually enforces it against the agent is the signature: sign
+with `acb-cli sign-config`, start the daemon with `--verify-key`, and edit
+through `acb-cli edit-config --signing-key` (validates, bumps `revision`,
+re-signs). See [security-model.md §7](./security-model.md) and the
+"Protecting the policy file" section of [usage.md](./usage.md).
 
 ## revision
 

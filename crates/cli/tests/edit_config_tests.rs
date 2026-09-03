@@ -1,8 +1,7 @@
-//! End-to-end tests for `acb-cli edit-config` against an *unprotected* file
-//! (the path that needs no sudo). The editor is faked with `cp <src>` so the
-//! flow runs for real: stage -> "edit" -> validate -> write back. The
-//! privileged install path is covered by the unit tests in `protect::specs`
-//! and verified manually, since CI cannot grant root.
+//! End-to-end tests for `acb-cli edit-config` without a signing key. The
+//! editor is faked with `cp <src>` so the flow runs for real: stage ->
+//! "edit" -> validate -> write back. The signing path is covered in
+//! `sign_config_tests.rs`.
 
 use std::fs;
 use std::path::Path;

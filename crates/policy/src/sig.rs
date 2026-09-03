@@ -1,11 +1,12 @@
 //! Signature verification for the policy file.
 //!
 //! The policy is the agent's most powerful input, and on a developer machine
-//! the agent usually shares a filesystem with it. Filesystem locks
-//! (`protect-config`) turn "edit the policy" into "obtain root"; signatures
-//! turn it into "use the operator's signing key", which can live behind a
-//! human-presence check (Touch ID, Windows Hello, a FIDO2 touch, an
-//! `ssh-add -c` confirmation) with no root involved at all.
+//! the agent usually shares a filesystem with it. Filesystem permissions
+//! cannot separate the two (same user), and a root-owned file would need
+//! sudo for every edit. A signature turns "edit the policy" into "use the
+//! operator's signing key", which can live behind a human-presence check
+//! (Touch ID, Windows Hello, a FIDO2 touch, an `ssh-add -c` confirmation)
+//! with no root involved at all.
 //!
 //! Format: **sshsig**, the detached-signature format of
 //! `ssh-keygen -Y sign` (PROTOCOL.sshsig). It was chosen over a bespoke

@@ -2,5 +2,5 @@
 //! warrant their own unit tests; the daemon-facing subcommands stay in the
 //! binary crate (`main.rs`).
 
-pub mod protect;
+pub mod edit;
 pub mod sign;

@@ -254,8 +254,6 @@ acb-cli edit-config                    # visudo-style edit: $EDITOR + validate +
                                        #   (--signing-key: also bump revision + re-sign)
 acb-cli sign-config --signing-key K    # write config.yaml.sig with `ssh-keygen -Y sign`
 acb-cli verify-config --verify-key P   # offline check of config.yaml.sig, as the daemon does
-acb-cli protect-config                 # lock config.yaml (root-owned + immutable)
-acb-cli unprotect-config               # undo protect-config
 acb-cli status                         # ping the daemon
 acb-cli config                         # show redacted policy + helper sha256
 acb-cli reload                         # nudge a manual policy reload
@@ -288,43 +286,17 @@ ones read `ACB_SIGNING_KEY` / `ACB_VERIFY_KEY`.
 rewrite it can grant itself any URL or element class. The daemon's HTTP API
 has no policy-write endpoint, so the agent can't change the policy *through
 the browser* — but if the agent shares a filesystem with `config.yaml` (the
-common "coding agent in your repo" case), it could just edit the file.
+common "coding agent in your repo" case), it could just edit the file. File
+permissions can't help: the agent runs as you.
 
-Lock it down once, then edit it through the wrapper (the `visudo` pattern):
-
-```bash
-acb-cli protect-config              # asks for your sudo/UAC password once
-# ...the agent can no longer modify config.yaml...
-acb-cli edit-config                 # opens $EDITOR, validates, re-locks, reloads
-```
-
-- **What it does.** `protect-config` makes the file root-owned and immutable
-  (`chattr +i` on Linux, `chflags schg` on macOS, NTFS ACLs on Windows).
-  `edit-config` stages a copy, runs `$EDITOR`, **rejects invalid policy with
-  the same loader the daemon uses** (your edits are kept in a temp file on
-  failure), then re-applies the lock and nudges a hot reload.
-- **The guarantee, stated honestly.** This converts "modify the policy" into
-  "obtain root/admin", which requires the human's password. It protects you
-  **only if the agent cannot non-interactively become root** — i.e. you are
-  *not* using passwordless (`NOPASSWD`) sudo and the agent does *not* run as
-  root/Administrator. On a default install that holds.
-- **Docker.** The compose file already bind-mounts `config.yaml` read-only
-  into the container; `protect-config`/`edit-config` protect the *host* side.
-  They compose.
-- **Windows / WSL caveat.** `chattr`/ownership only work on a real Linux
-  filesystem. If your `config.yaml` lives on a Windows drive mounted into WSL
-  (`/mnt/c/...`), keep it in the WSL ext4 filesystem instead, or run the
-  commands from native Windows (PowerShell) so the NTFS-ACL path is used.
-
-### Signing the policy file (no root needed)
-
-The alternative — or complement — to the filesystem lock is a **signed
-policy**. The daemon is started with `--verify-key <pubkeys>` and from then
-on accepts `config.yaml` only together with a `config.yaml.sig` that is a
-valid signature over its exact bytes by one of those keys. The agent can
-still *write* the file, but an unsigned or re-edited file simply fails
-verification: the daemon keeps the previous policy and emits
-`policy.reload_failed`, the same way it treats malformed YAML.
+The answer is a **signed policy**. The daemon is started with
+`--verify-key <pubkeys>` and from then on accepts `config.yaml` only together
+with a `config.yaml.sig` that is a valid signature over its exact bytes by
+one of those keys. The agent can still *write* the file, but an unsigned or
+re-edited file simply fails verification: the daemon keeps the previous
+policy and emits `policy.reload_failed`, the same way it treats malformed
+YAML. No root, no sudo, and the file can live anywhere — even inside the
+agent's working tree.
 
 The signature is **sshsig**, i.e. what `ssh-keygen -Y sign` produces. That
 is deliberate: OpenSSH is on every supported OS, and the key can sit behind
@@ -378,16 +350,15 @@ acb-cli verify-config --verify-key ~/.ssh/acb_policy.pub
     confirmation the agent cannot click. Pass the `.pub` as
     `--signing-key`.
   - **Passphrase-protected key file** (any OS): `ssh-keygen` prompts for
-    the passphrase on the terminal. Equivalent in strength to the sudo
-    password of `protect-config`, minus the root requirement, but an
+    the passphrase on the terminal. The agent does not know it, but an
     offline brute force of a weak passphrase is possible.
   - An **unencrypted key file** gives no protection at all — anything that
     can read it can sign.
 - **Precondition, stated honestly.** The public-key pin (`--verify-key`)
   is itself a file or an argument. An agent that can restart *your* daemon
   with its own `--verify-key`, or point `acb-cli` at a daemon of its own,
-  is outside this control — exactly as it is outside the filesystem lock
-  today (`acb-daemon --config /tmp/anything.yaml` was always possible).
+  is outside this control (`acb-daemon --config /tmp/anything.yaml` is
+  always possible; that daemon is simply not the one your tools point at).
   The guarantee is: **the daemon the operator started will not load a
   policy the operator did not sign.** Keep the verify-key file (and the
   daemon's launch definition) where the agent does not write, and do not

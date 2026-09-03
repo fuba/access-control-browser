@@ -9,7 +9,7 @@ mod state;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use acb_cli::{protect, sign};
+use acb_cli::{edit, sign};
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -42,9 +42,10 @@ enum Cmd {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
     },
-    /// Edit config.yaml in $EDITOR, validate it, and save it back — even when
-    /// the file is root-protected (visudo-style). Invalid policy is rejected.
-    /// With --signing-key the save also bumps `revision:` and re-signs.
+    /// Edit config.yaml in $EDITOR, validate it, and save it back
+    /// (visudo-style). Invalid policy is rejected. With --signing-key the
+    /// save also bumps `revision:` and re-signs (required once the policy has
+    /// a config.yaml.sig).
     EditConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
@@ -72,17 +73,6 @@ enum Cmd {
         /// --verify-key).
         #[arg(long, env = "ACB_VERIFY_KEY")]
         verify_key: PathBuf,
-    },
-    /// Make config.yaml root-owned and immutable so the agent cannot rewrite
-    /// the policy. Requires the operator's sudo / UAC password.
-    ProtectConfig {
-        #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
-        config: PathBuf,
-    },
-    /// Remove the protection applied by `protect-config`.
-    UnprotectConfig {
-        #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
-        config: PathBuf,
     },
     /// Ping the daemon.
     Status,
@@ -172,8 +162,6 @@ async fn run() -> Result<ExitCode> {
             signing_key,
         } => sign_config_cmd(config, signing_key),
         Cmd::VerifyConfig { config, verify_key } => verify_config_cmd(config, verify_key),
-        Cmd::ProtectConfig { config } => protect_config_cmd(config),
-        Cmd::UnprotectConfig { config } => unprotect_config_cmd(config),
         Cmd::Status => status(base, tf).await,
         Cmd::Config => config_cmd(base, tf).await,
         Cmd::Reload => reload_cmd(base, tf).await,
@@ -220,20 +208,20 @@ async fn edit_config_cmd(
     config: PathBuf,
     signing_key: Option<PathBuf>,
 ) -> Result<ExitCode> {
-    let opts = protect::EditOptions { signing_key };
-    match protect::edit(&config, &opts)? {
-        protect::EditStatus::Unchanged => {
+    let opts = edit::EditOptions { signing_key };
+    match edit::edit(&config, &opts)? {
+        edit::EditStatus::Unchanged => {
             println!("no changes");
             return Ok(ExitCode::SUCCESS);
         }
-        protect::EditStatus::Saved {
+        edit::EditStatus::Saved {
             signed_revision: Some(rev),
         } => println!(
             "saved {} (revision {rev}, signed into {})",
             config.display(),
             sign::sig_path(&config).display()
         ),
-        protect::EditStatus::Saved {
+        edit::EditStatus::Saved {
             signed_revision: None,
         } => println!("saved {}", config.display()),
     }
@@ -287,18 +275,6 @@ fn verify_config_cmd(config: PathBuf, verify_key: PathBuf) -> Result<ExitCode> {
             Ok(ExitCode::from(1))
         }
     }
-}
-
-fn protect_config_cmd(config: PathBuf) -> Result<ExitCode> {
-    protect::protect(&config)?;
-    println!("protected {} (root-owned + immutable)", config.display());
-    Ok(ExitCode::SUCCESS)
-}
-
-fn unprotect_config_cmd(config: PathBuf) -> Result<ExitCode> {
-    protect::unprotect(&config)?;
-    println!("unprotected {}", config.display());
-    Ok(ExitCode::SUCCESS)
 }
 
 async fn status(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {
