@@ -5,6 +5,8 @@ reloads in place via the daemon's `notify` watcher (or a poll fallback on
 hosts where inotify doesn't propagate, e.g. macOS bind mounts).
 
 ```yaml
+revision: 12                       # optional; monotonic counter for signed policies
+
 server:
   bind: "127.0.0.1"                # 0.0.0.0 only with --insecure-bind
   port: 39100                      # port competition is fatal; do NOT renumber
@@ -117,7 +119,7 @@ a single directory that's outside any LLM agent's writable area:
 
 ```
 /etc/access-control-browser/
-├── config.yaml          ← root-owned, read-only for the daemon user
+├── config.yaml          ← plus config.yaml.sig when the daemon runs --verify-key
 ├── logs/                ← log_file: "./logs/access-control-browser.log"
 └── var/profile/         ← user_data_dir: "./var/profile"
 ```
@@ -131,12 +133,23 @@ backwards-compatible default `--config ./config.yaml` still puts
 `./logs/` and `./var/` next to the config file (which in that case is
 also next to your CWD).
 
-To make the "root-owned, read-only for the daemon user" layout above
-actually enforceable against the agent, lock the file with
-`acb-cli protect-config` and edit it through `acb-cli edit-config`
-(validates before saving, then re-locks). See
-[security-model.md §7](./security-model.md) and the "Protecting the
-policy file" section of [usage.md](./usage.md).
+Placing the file outside the agent's working tree keeps it out of casual
+reach; what actually enforces it against the agent is the signature: sign
+with `acb-cli sign-config`, start the daemon with `--verify-key`, and edit
+through `acb-cli edit-config --signing-key` (validates, bumps `revision`,
+re-signs). See [security-model.md §7](./security-model.md) and the
+"Protecting the policy file" section of [usage.md](./usage.md).
+
+## revision
+
+Optional top-level unsigned integer, default `0`. Meaningful only when the
+daemon runs with `--verify-key` (signed policy): a hot reload is refused if
+the offered policy's `revision` is lower than the one in effect, so a
+validly signed *older* file cannot be replayed by the agent. Equal
+revisions are accepted. `acb-cli edit-config --signing-key` inserts the
+field if missing and increments it on every save; when signing by hand
+with `ssh-keygen -Y sign`, bump it yourself. See
+[security-model.md §7](./security-model.md).
 
 ## Etag
 

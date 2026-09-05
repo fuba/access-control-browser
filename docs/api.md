@@ -39,6 +39,21 @@ The SSE `/events` feed includes a `session_url` event
 (`{session, url, title}`) emitted on navigation / title change, which the
 UI uses to keep the location bar and tab labels live.
 
+`GET /config` returns `{etag, revision, signature_required, rules,
+always_block_schemes, subresources_inherit_page, helper_sha256, viewport}`.
+`signature_required` is true when the daemon was started with
+`--verify-key`; `revision` is the policy's top-level `revision:` (0 when
+unset).
+
+`POST /admin/reload` re-reads the on-disk policy through the same verified
+loader as startup and the file watcher. It returns **400** with the reason
+when the file is malformed, its `config.yaml.sig` does not verify, or its
+`revision` is lower than the one in effect; the previous policy stays in
+effect. On the SSE feed the same outcomes appear as `policy_reloaded`
+(`{etag, revision, signer?}` — `signer` is the SHA-256 fingerprint of the
+trusted key, present only in signed mode) and `policy_reload_failed`
+(`{error}`).
+
 ## `/sessions/:id/viewport` WS
 
 Bidirectional. Server → client is binary image frames (JPEG/PNG/WebP per

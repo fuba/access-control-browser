@@ -19,6 +19,14 @@ url = { workspace = true }
 regex = { workspace = true }
 ipnet = { workspace = true }
 sha2 = "0.10"
+# sshsig (`ssh-keygen -Y sign`) verification for signed policy files.
+# ed25519 + p256 cover software keys, FIDO2 `-sk` keys, Secure Enclave and
+# TPM-backed P-256 keys; no RSA on purpose (keeps the dependency tree small).
+ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ecdsa", "ed25519", "p256"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
+# Sign test vectors in-process (the production signer is `ssh-keygen`).
+ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ecdsa", "ed25519", "p256", "rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+tempfile = "3"

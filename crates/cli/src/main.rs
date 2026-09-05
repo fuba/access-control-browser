@@ -9,7 +9,7 @@ mod state;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use acb_cli::protect;
+use acb_cli::{edit, sign};
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
@@ -42,22 +42,37 @@ enum Cmd {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
     },
-    /// Edit config.yaml in $EDITOR, validate it, and save it back — even when
-    /// the file is root-protected (visudo-style). Invalid policy is rejected.
+    /// Edit config.yaml in $EDITOR, validate it, and save it back
+    /// (visudo-style). Invalid policy is rejected. With --signing-key the
+    /// save also bumps `revision:` and re-signs (required once the policy has
+    /// a config.yaml.sig).
     EditConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
+        /// Key for `ssh-keygen -Y sign` (private key file, or the .pub of a
+        /// key held by ssh-agent / a security key). Required once the policy
+        /// has a config.yaml.sig.
+        #[arg(long, env = "ACB_SIGNING_KEY")]
+        signing_key: Option<PathBuf>,
     },
-    /// Make config.yaml root-owned and immutable so the agent cannot rewrite
-    /// the policy. Requires the operator's sudo / UAC password.
-    ProtectConfig {
+    /// Sign config.yaml as-is into config.yaml.sig with `ssh-keygen -Y sign`,
+    /// for a daemon started with --verify-key. Does not touch the policy.
+    SignConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
+        /// Key for `ssh-keygen -Y sign -f`.
+        #[arg(long, env = "ACB_SIGNING_KEY")]
+        signing_key: PathBuf,
     },
-    /// Remove the protection applied by `protect-config`.
-    UnprotectConfig {
+    /// Check config.yaml.sig against a verify-key file, exactly as the daemon
+    /// does at startup and on reload (no daemon needed).
+    VerifyConfig {
         #[arg(long, short, default_value = "./config.yaml", env = "ACB_CONFIG")]
         config: PathBuf,
+        /// File of trusted OpenSSH public keys (what the daemon gets as
+        /// --verify-key).
+        #[arg(long, env = "ACB_VERIFY_KEY")]
+        verify_key: PathBuf,
     },
     /// Ping the daemon.
     Status,
@@ -138,9 +153,15 @@ async fn run() -> Result<ExitCode> {
     let sess = cli.session;
     match cli.cmd {
         Cmd::Validate { url, config } => validate(url, config),
-        Cmd::EditConfig { config } => edit_config_cmd(base, tf, config).await,
-        Cmd::ProtectConfig { config } => protect_config_cmd(config),
-        Cmd::UnprotectConfig { config } => unprotect_config_cmd(config),
+        Cmd::EditConfig {
+            config,
+            signing_key,
+        } => edit_config_cmd(base, tf, config, signing_key).await,
+        Cmd::SignConfig {
+            config,
+            signing_key,
+        } => sign_config_cmd(config, signing_key),
+        Cmd::VerifyConfig { config, verify_key } => verify_config_cmd(config, verify_key),
         Cmd::Status => status(base, tf).await,
         Cmd::Config => config_cmd(base, tf).await,
         Cmd::Reload => reload_cmd(base, tf).await,
@@ -185,13 +206,24 @@ async fn edit_config_cmd(
     base: String,
     token_file: Option<PathBuf>,
     config: PathBuf,
+    signing_key: Option<PathBuf>,
 ) -> Result<ExitCode> {
-    match protect::edit(&config)? {
-        protect::EditStatus::Unchanged => {
+    let opts = edit::EditOptions { signing_key };
+    match edit::edit(&config, &opts)? {
+        edit::EditStatus::Unchanged => {
             println!("no changes");
             return Ok(ExitCode::SUCCESS);
         }
-        protect::EditStatus::Saved => println!("saved {}", config.display()),
+        edit::EditStatus::Saved {
+            signed_revision: Some(rev),
+        } => println!(
+            "saved {} (revision {rev}, signed into {})",
+            config.display(),
+            sign::sig_path(&config).display()
+        ),
+        edit::EditStatus::Saved {
+            signed_revision: None,
+        } => println!("saved {}", config.display()),
     }
     // Best-effort hot-reload nudge; the daemon's file watcher also catches it.
     match Daemon::connect(base, token_file) {
@@ -207,16 +239,42 @@ async fn edit_config_cmd(
     Ok(ExitCode::SUCCESS)
 }
 
-fn protect_config_cmd(config: PathBuf) -> Result<ExitCode> {
-    protect::protect(&config)?;
-    println!("protected {} (root-owned + immutable)", config.display());
+fn sign_config_cmd(config: PathBuf, signing_key: PathBuf) -> Result<ExitCode> {
+    let text = std::fs::read_to_string(&config)
+        .with_context(|| format!("failed to read {}", config.display()))?;
+    // Sign only what the daemon would accept; a broken file is caught here
+    // rather than as a reload failure later.
+    acb_policy::load::load_policy(&text)
+        .with_context(|| format!("invalid policy in {}", config.display()))?;
+    if sign::current_revision(&text).is_none() {
+        eprintln!(
+            "warning: {} has no top-level `revision:`; without it the daemon cannot tell an \
+             old signed policy from a new one (no rollback protection). `acb-cli edit-config` \
+             adds and bumps it automatically.",
+            config.display()
+        );
+    }
+    let sig = sign::sign(&config, &signing_key)?;
+    println!("signed {} -> {}", config.display(), sig.display());
     Ok(ExitCode::SUCCESS)
 }
 
-fn unprotect_config_cmd(config: PathBuf) -> Result<ExitCode> {
-    protect::unprotect(&config)?;
-    println!("unprotected {}", config.display());
-    Ok(ExitCode::SUCCESS)
+fn verify_config_cmd(config: PathBuf, verify_key: PathBuf) -> Result<ExitCode> {
+    match sign::verify(&config, &verify_key) {
+        Ok((signer, revision)) => {
+            println!(
+                "OK {} revision={revision} signer={} {}",
+                config.display(),
+                signer.fingerprint,
+                signer.comment
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("FAIL {}: {e:#}", config.display());
+            Ok(ExitCode::from(1))
+        }
+    }
 }
 
 async fn status(base: String, token_file: Option<PathBuf>) -> Result<ExitCode> {

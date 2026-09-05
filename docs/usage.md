@@ -251,8 +251,9 @@ policy switches, and validation rules.
 ```
 acb-cli validate <url>                 # offline check against ./config.yaml
 acb-cli edit-config                    # visudo-style edit: $EDITOR + validate + save
-acb-cli protect-config                 # lock config.yaml (root-owned + immutable)
-acb-cli unprotect-config               # undo protect-config
+                                       #   (--signing-key: also bump revision + re-sign)
+acb-cli sign-config --signing-key K    # write config.yaml.sig with `ssh-keygen -Y sign`
+acb-cli verify-config --verify-key P   # offline check of config.yaml.sig, as the daemon does
 acb-cli status                         # ping the daemon
 acb-cli config                         # show redacted policy + helper sha256
 acb-cli reload                         # nudge a manual policy reload
@@ -276,7 +277,8 @@ acb-cli close                          # close the resolved session
 `--base http://host:port`, `--token-file <path>`, and `--session <sid>`
 overrides are available on every command; `ACB_BASE`, `ACB_TOKEN`,
 `ACB_TOKEN_FILE`, and `ACB_SESSION` env vars work too. The config-editing
-commands above take `-c/--config <path>` (or `ACB_CONFIG`).
+commands above take `-c/--config <path>` (or `ACB_CONFIG`); the signing
+ones read `ACB_SIGNING_KEY` / `ACB_VERIFY_KEY`.
 
 ### Protecting the policy file from the agent
 
@@ -284,33 +286,104 @@ commands above take `-c/--config <path>` (or `ACB_CONFIG`).
 rewrite it can grant itself any URL or element class. The daemon's HTTP API
 has no policy-write endpoint, so the agent can't change the policy *through
 the browser* — but if the agent shares a filesystem with `config.yaml` (the
-common "coding agent in your repo" case), it could just edit the file.
+common "coding agent in your repo" case), it could just edit the file. File
+permissions can't help: the agent runs as you.
 
-Lock it down once, then edit it through the wrapper (the `visudo` pattern):
+The answer is a **signed policy**. The daemon is started with
+`--verify-key <pubkeys>` and from then on accepts `config.yaml` only together
+with a `config.yaml.sig` that is a valid signature over its exact bytes by
+one of those keys. The agent can still *write* the file, but an unsigned or
+re-edited file simply fails verification: the daemon keeps the previous
+policy and emits `policy.reload_failed`, the same way it treats malformed
+YAML. No root, no sudo, and the file can live anywhere — even inside the
+agent's working tree.
+
+The signature is **sshsig**, i.e. what `ssh-keygen -Y sign` produces. That
+is deliberate: OpenSSH is on every supported OS, and the key can sit behind
+whatever human-presence check your platform offers. The daemon never holds
+a secret — only public keys — so it starts unattended and works in Docker.
 
 ```bash
-acb-cli protect-config              # asks for your sudo/UAC password once
-# ...the agent can no longer modify config.yaml...
-acb-cli edit-config                 # opens $EDITOR, validates, re-locks, reloads
+# 1. One-time: make a signing key (see "Choosing a key" below for options).
+ssh-keygen -t ed25519 -f ~/.ssh/acb_policy -C "acb policy signer"
+
+# 2. Sign the current policy.
+acb-cli sign-config --signing-key ~/.ssh/acb_policy        # -> config.yaml.sig
+
+# 3. Start the daemon in verify mode (or set ACB_VERIFY_KEY).
+acb-daemon --config ./config.yaml --verify-key ~/.ssh/acb_policy.pub
+
+# 4. From now on, edit through the wrapper; it bumps `revision:` and re-signs.
+export ACB_SIGNING_KEY=~/.ssh/acb_policy
+acb-cli edit-config
+
+# Any time: check what the daemon would accept.
+acb-cli verify-config --verify-key ~/.ssh/acb_policy.pub
 ```
 
-- **What it does.** `protect-config` makes the file root-owned and immutable
-  (`chattr +i` on Linux, `chflags schg` on macOS, NTFS ACLs on Windows).
-  `edit-config` stages a copy, runs `$EDITOR`, **rejects invalid policy with
-  the same loader the daemon uses** (your edits are kept in a temp file on
-  failure), then re-applies the lock and nudges a hot reload.
-- **The guarantee, stated honestly.** This converts "modify the policy" into
-  "obtain root/admin", which requires the human's password. It protects you
-  **only if the agent cannot non-interactively become root** — i.e. you are
-  *not* using passwordless (`NOPASSWD`) sudo and the agent does *not* run as
-  root/Administrator. On a default install that holds.
-- **Docker.** The compose file already bind-mounts `config.yaml` read-only
-  into the container; `protect-config`/`edit-config` protect the *host* side.
-  They compose.
-- **Windows / WSL caveat.** `chattr`/ownership only work on a real Linux
-  filesystem. If your `config.yaml` lives on a Windows drive mounted into WSL
-  (`/mnt/c/...`), keep it in the WSL ext4 filesystem instead, or run the
-  commands from native Windows (PowerShell) so the NTFS-ACL path is used.
+- **What is checked.** Namespace `acb-policy` (a signature made with the
+  same key for git or ssh does not count), the exact file bytes, and that
+  the signer is in the verify-key file (one OpenSSH public key per line,
+  so several operators can be trusted). Checked at startup, on every hot
+  reload and on `POST /admin/reload`. `acb-cli config` shows
+  `signature_required` and the loaded `revision`.
+- **Rollback protection.** The daemon refuses a policy whose top-level
+  `revision:` is lower than the one in effect, so an agent cannot
+  re-install yesterday's (validly signed, more permissive) file.
+  `edit-config` inserts and increments the field for you; if you sign by
+  hand with `ssh-keygen -Y sign -n acb-policy -f KEY config.yaml`, bump it
+  yourself. The guard lives in daemon memory: it protects a running
+  daemon, not one the agent can restart with different arguments (see the
+  precondition below).
+- **Choosing a key — this is where the security comes from.** The
+  guarantee is only as strong as "the agent cannot use the signing key
+  without a human". Options, strongest first:
+  - **FIDO2 security key** (any OS): `ssh-keygen -t ed25519-sk` (or
+    `ecdsa-sk`). Every signature needs a physical touch. Pass the
+    resulting private-key *handle* file as `--signing-key`.
+  - **macOS Secure Enclave via an ssh-agent** such as
+    [Secretive](https://github.com/maxgoedjen/secretive): Touch ID on each
+    signature. Pass the key's `.pub` as `--signing-key`; `ssh-keygen` then
+    signs through the agent. An agent is genuinely required here — see the
+    note below on why `acb-cli` cannot reach the Secure Enclave itself.
+  - **Agent with per-use confirmation** (Linux/macOS, plain OpenSSH):
+    `ssh-add -c ~/.ssh/acb_policy` — each signature pops an askpass
+    confirmation the agent cannot click. Pass the `.pub` as
+    `--signing-key`.
+  - **Passphrase-protected key file** (any OS): `ssh-keygen` prompts for
+    the passphrase on the terminal. The agent does not know it, but an
+    offline brute force of a weak passphrase is possible.
+  - An **unencrypted key file** gives no protection at all — anything that
+    can read it can sign.
+- **Precondition, stated honestly.** The public-key pin (`--verify-key`)
+  is itself a file or an argument. An agent that can restart *your* daemon
+  with its own `--verify-key`, or point `acb-cli` at a daemon of its own,
+  is outside this control (`acb-daemon --config /tmp/anything.yaml` is
+  always possible; that daemon is simply not the one your tools point at).
+  The guarantee is: **the daemon the operator started will not load a
+  policy the operator did not sign.** Keep the verify-key file (and the
+  daemon's launch definition) where the agent does not write, and do not
+  give the agent's terminal accessibility/automation rights that would let
+  it click through Touch ID or askpass dialogs.
+- **Docker.** Mount `config.yaml.sig` read-only next to `config.yaml`,
+  mount the public key, and set `ACB_VERIFY_KEY` (see the commented lines
+  in `compose.yml`). The container never sees the private key.
+- **Windows.** Windows 11 ships OpenSSH 8.x+, which has `-Y sign`; on
+  Windows 10 install a current OpenSSH. Use a FIDO2 key or a
+  passphrase-protected key file.
+- **Why there is no native Secure Enclave backend.** A Secure Enclave key
+  must live in the data-protection keychain, and that keychain only admits
+  a binary code-signed with a `keychain-access-groups` entitlement backed
+  by a real Apple Team ID. This was measured, not assumed: an ad-hoc signed
+  probe (`codesign -s -`) gets `errSecMissingEntitlement` (-34018) from
+  `SecKeyCreateRandomKey` both with and without
+  `kSecUseDataProtectionKeychain`, and adding `keychain-access-groups` to
+  an ad-hoc signature makes the binary get killed at exec instead. So a CLI
+  distributed as source (`cargo build` / `cargo install`) cannot talk to
+  the Secure Enclave at all; a signed, entitled application such as
+  Secretive has to hold the key and expose it over the ssh-agent protocol.
+  The same packaging constraint is why Windows Hello is not offered
+  natively either.
 
 ### Operating the tab a human opened in the web UI
 

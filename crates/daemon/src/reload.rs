@@ -1,10 +1,15 @@
 // Hot reload of the policy file. Spawns a notify watcher (with a polling
 // fallback for bind-mounted volumes on hosts where inotify doesn't
 // propagate) and atomically swaps the AppState's ArcSwap<CompiledPolicy>
-// on every successful load. Parse errors keep the previous policy in
-// effect and emit a `policy.reload_failed` activity event.
+// on every successful load. Parse errors, signature failures and revision
+// rollbacks all keep the previous policy in effect and emit a
+// `policy.reload_failed` activity event.
+//
+// Both `config.yaml` and `config.yaml.sig` are watched: a signed edit lands
+// as two writes, and whichever arrives last must trigger the load that sees
+// the consistent pair.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,6 +49,9 @@ pub fn spawn(path: PathBuf, poll_ms: u64, state: AppState) -> tokio::task::JoinH
                 return;
             }
         };
+        let sig_name = crate::policy_file::sig_path(&target)
+            .file_name()
+            .map(|n| n.to_owned());
         let (dir, file_name) = match (target.parent(), target.file_name()) {
             (Some(d), Some(n)) => (d.to_path_buf(), n.to_owned()),
             _ => {
@@ -76,9 +84,11 @@ pub fn spawn(path: PathBuf, poll_ms: u64, state: AppState) -> tokio::task::JoinH
         while let Some(res) = rx.recv().await {
             if let Ok(events) = res {
                 let touched = events.iter().any(|e| {
-                    e.paths
-                        .iter()
-                        .any(|p| p.file_name() == Some(file_name.as_os_str()))
+                    e.paths.iter().any(|p| {
+                        let n = p.file_name();
+                        n == Some(file_name.as_os_str())
+                            || (n.is_some() && n == sig_name.as_deref())
+                    })
                 });
                 if touched {
                     reload_once(&path, &state).await;
@@ -89,11 +99,18 @@ pub fn spawn(path: PathBuf, poll_ms: u64, state: AppState) -> tokio::task::JoinH
 }
 
 async fn poll_loop(path: PathBuf, poll_ms: u64, state: AppState) {
-    let mut last = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+    let sig = crate::policy_file::sig_path(&path);
+    let stamp = |p: &Path, s: &Path| {
+        (
+            std::fs::metadata(p).and_then(|m| m.modified()).ok(),
+            std::fs::metadata(s).and_then(|m| m.modified()).ok(),
+        )
+    };
+    let mut last = stamp(&path, &sig);
     let interval = Duration::from_millis(poll_ms);
     loop {
         tokio::time::sleep(interval).await;
-        let cur = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let cur = stamp(&path, &sig);
         if cur != last {
             last = cur;
             reload_once(&path, &state).await;
@@ -101,48 +118,33 @@ async fn poll_loop(path: PathBuf, poll_ms: u64, state: AppState) {
     }
 }
 
-async fn reload_once(path: &PathBuf, state: &AppState) {
-    let yaml = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = state.events().send(ActivityEvent::PolicyReloadFailed {
-                ts: now_unix(),
-                error: format!("read {}: {e}", path.display()),
-            });
-            return;
-        }
-    };
-    let base = path.parent().unwrap_or(std::path::Path::new("."));
-    match acb_policy::load::load_policy_with_base(&yaml, Some(base)) {
-        Ok(new_policy) => {
-            let etag = new_policy.etag.clone();
-            state.swap_policy(Arc::new(new_policy));
-            info!(etag, "policy reloaded");
-            let _ = state.events().send(ActivityEvent::PolicyReloaded {
-                ts: now_unix(),
-                etag,
-            });
-        }
-        Err(e) => {
-            error!(error = %e, "policy reload failed, keeping previous");
-            let _ = state.events().send(ActivityEvent::PolicyReloadFailed {
-                ts: now_unix(),
-                error: e.to_string(),
-            });
-        }
+async fn reload_once(path: &Path, state: &AppState) {
+    if let Err(e) = reload_now(path, state).await {
+        error!(error = %format!("{e:#}"), "policy reload failed, keeping previous");
+        let _ = state.events().send(ActivityEvent::PolicyReloadFailed {
+            ts: now_unix(),
+            error: format!("{e:#}"),
+        });
     }
 }
 
-/// Force a single reload. Returns the resulting etag on success.
-pub async fn reload_now(path: &PathBuf, state: &AppState) -> anyhow::Result<String> {
-    let yaml = std::fs::read_to_string(path)?;
-    let base = path.parent().unwrap_or(std::path::Path::new("."));
-    let new_policy = acb_policy::load::load_policy_with_base(&yaml, Some(base))?;
-    let etag = new_policy.etag.clone();
-    state.swap_policy(Arc::new(new_policy));
+/// Force a single reload: read, verify (when verify keys are set), compile,
+/// swap. Returns the resulting etag on success; on any failure the previous
+/// policy stays in effect.
+pub async fn reload_now(path: &Path, state: &AppState) -> anyhow::Result<String> {
+    let keys = state.verify_keys();
+    let current_revision = state.policy().revision;
+    let loaded = crate::policy_file::load(path, keys.as_ref(), Some(current_revision))?;
+    let etag = loaded.policy.etag.clone();
+    let revision = loaded.policy.revision;
+    let signer = loaded.signer.map(|s| s.fingerprint);
+    state.swap_policy(Arc::new(loaded.policy));
+    info!(etag, revision, signer = ?signer, "policy reloaded");
     let _ = state.events().send(ActivityEvent::PolicyReloaded {
         ts: now_unix(),
         etag: etag.clone(),
+        revision,
+        signer,
     });
     Ok(etag)
 }

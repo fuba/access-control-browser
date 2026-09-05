@@ -11,6 +11,8 @@ pub struct CompiledPolicy {
     pub resource_policy: ResourcePolicy,
     pub rules: Vec<CompiledRule>,
     pub etag: String,
+    /// See `PolicyConfig::revision`.
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone)]

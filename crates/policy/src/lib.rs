@@ -6,6 +6,7 @@ pub mod config;
 pub mod element_policy;
 pub mod load;
 pub mod request_policy;
+pub mod sig;
 pub mod url_rule;
 pub mod url_validator;
 

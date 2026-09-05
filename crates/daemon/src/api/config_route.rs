@@ -13,6 +13,11 @@ use crate::AppState;
 #[derive(Serialize)]
 pub struct ConfigSummary {
     etag: String,
+    /// `revision:` field of the policy in effect (0 when unset).
+    revision: u64,
+    /// True when the daemon runs with `--verify-key`: on-disk edits are only
+    /// accepted with a valid `config.yaml.sig` by a trusted key.
+    signature_required: bool,
     rules: Vec<RuleSummary>,
     always_block_schemes: Vec<String>,
     subresources_inherit_page: bool,
@@ -52,6 +57,8 @@ pub async fn handler(State(state): State<AppState>) -> Json<ConfigSummary> {
         .collect();
     Json(ConfigSummary {
         etag: p.etag.clone(),
+        revision: p.revision,
+        signature_required: state.verify_keys().is_some(),
         rules,
         always_block_schemes: p.resource_policy.always_block_schemes.clone(),
         subresources_inherit_page: p.resource_policy.subresources_inherit_page,
