@@ -3,5 +3,4 @@
 //! binary crate (`main.rs`).
 
 pub mod edit;
-pub mod se;
 pub mod sign;

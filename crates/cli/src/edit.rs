@@ -28,10 +28,10 @@ pub enum EditStatus {
 /// Signing behaviour of [`edit`].
 #[derive(Debug, Clone, Default)]
 pub struct EditOptions {
-    /// The signing key (see [`crate::sign::SigningKey`]). When set, every
-    /// save bumps `revision:` and installs a fresh `<config>.sig` before the
-    /// policy itself.
-    pub signing_key: Option<crate::sign::SigningKey>,
+    /// Key for `ssh-keygen -Y sign -f` (private key file, or public key of an
+    /// agent-held key). When set, every save bumps `revision:` and installs
+    /// a fresh `<config>.sig` before the policy itself.
+    pub signing_key: Option<PathBuf>,
 }
 
 /// visudo-style edit: stage a copy, open `$EDITOR`, validate the result with

@@ -1,28 +1,21 @@
 //! Operator-side signing of `config.yaml`.
 //!
-//! Two signing backends produce the same **sshsig** envelope that
-//! `acb-daemon --verify-key` checks (see `acb_policy::sig`):
+//! The signer is `ssh-keygen -Y sign` (OpenSSH >= 8.0, shipped on Linux,
+//! macOS and Windows 11). Delegating to it — rather than signing in-process —
+//! is the point: the key can be a passphrase-protected file, a key held by
+//! an agent that asks for confirmation on every use (`ssh-add -c`), a FIDO2
+//! security key that needs a touch, or a Secure-Enclave key behind Touch ID
+//! via an agent such as Secretive. Every one of those is a human-presence
+//! check that an autonomous agent running as the same user cannot pass, and
+//! none of them needs root.
 //!
-//! - [`SigningKey::SshKeygen`] delegates to `ssh-keygen -Y sign` (OpenSSH
-//!   8.0 or newer, shipped on Linux, macOS and Windows 11). The key can be a
-//!   passphrase-protected file, a key held by an agent that asks for
-//!   confirmation on every use (`ssh-add -c`), or a FIDO2 security key that
-//!   needs a touch.
-//! - [`SigningKey::SecureEnclave`] (macOS only, zero install) signs with a
-//!   P-256 key that lives in the Secure Enclave and is created with a
-//!   user-presence access control, so every signature asks for Touch ID or
-//!   the login password. See [`crate::se`].
-//!
-//! Every one of those is a human-presence check that an autonomous agent
-//! running as the same user cannot pass, and none of them needs root.
+//! The daemon side (`acb-daemon --verify-key`) verifies with the public key
+//! only; see `acb_policy::sig`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::str::FromStr;
 
 use anyhow::{bail, Context, Result};
-use ssh_key::public::{EcdsaPublicKey, KeyData};
-use ssh_key::{HashAlg, PublicKey, SshSig};
 
 use acb_policy::sig::{Signer, VerifyKeys, NAMESPACE, SIG_SUFFIX};
 
@@ -33,77 +26,26 @@ pub fn sig_path(config: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-/// Prefix that selects the native Secure Enclave backend in
-/// `--signing-key` / `ACB_SIGNING_KEY`: `secure-enclave` or
-/// `secure-enclave:<label>`.
-pub const SECURE_ENCLAVE_SCHEME: &str = "secure-enclave";
-
-/// What `--signing-key` names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SigningKey {
-    /// Anything `ssh-keygen -Y sign -f` accepts: a private key file, or the
-    /// `.pub` of a key held by an ssh-agent / security key.
-    SshKeygen(PathBuf),
-    /// A Secure Enclave key created by `acb-cli keygen --backend
-    /// secure-enclave`, identified by its label.
-    SecureEnclave { label: String },
-}
-
-impl SigningKey {
-    /// `secure-enclave` / `secure-enclave:<label>` select the native
-    /// backend; everything else is a path for `ssh-keygen`.
-    pub fn parse(s: &str) -> Self {
-        if s == SECURE_ENCLAVE_SCHEME {
-            return SigningKey::SecureEnclave {
-                label: crate::se::DEFAULT_LABEL.to_string(),
-            };
-        }
-        if let Some(label) = s.strip_prefix(&format!("{SECURE_ENCLAVE_SCHEME}:")) {
-            let label = label.trim();
-            return SigningKey::SecureEnclave {
-                label: if label.is_empty() {
-                    crate::se::DEFAULT_LABEL.to_string()
-                } else {
-                    label.to_string()
-                },
-            };
-        }
-        SigningKey::SshKeygen(PathBuf::from(s))
-    }
-}
-
-impl FromStr for SigningKey {
-    type Err = std::convert::Infallible;
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(Self::parse(s))
-    }
-}
-
-/// Sign the exact bytes of `config` with `key` and install the detached
-/// signature at `<config>.sig`, moved into place with a rename so the
-/// daemon's watcher never sees a half-written signature.
-pub fn sign(config: &Path, key: &SigningKey) -> Result<PathBuf> {
+/// Sign the exact bytes of `config` with `signing_key` and install the
+/// detached signature at `<config>.sig`. `signing_key` is whatever
+/// `ssh-keygen -Y sign -f` accepts: a private key file, or a *public* key
+/// file when the private half lives in an ssh-agent / security key.
+///
+/// Signing happens on a staged copy in a private temp dir, because
+/// `ssh-keygen -Y sign` writes `<file>.sig` next to its input and stops to
+/// ask before overwriting an existing one. The result is then moved into
+/// place with a rename, so the daemon's watcher never sees a half-written
+/// signature.
+pub fn sign(config: &Path, signing_key: &Path) -> Result<PathBuf> {
     let bytes = std::fs::read(config).with_context(|| format!("read {}", config.display()))?;
     let out = sig_path(config);
-    let pem = sign_bytes(&bytes, key)?;
+    let pem = sign_bytes(&bytes, signing_key)?;
     install_sig(&out, &pem)?;
     Ok(out)
 }
 
-/// Produce the PEM-armored sshsig over `bytes` with `key`.
-pub fn sign_bytes(bytes: &[u8], key: &SigningKey) -> Result<String> {
-    match key {
-        SigningKey::SshKeygen(path) => sign_with_ssh_keygen(bytes, path),
-        SigningKey::SecureEnclave { label } => sign_with_secure_enclave(bytes, label),
-    }
-}
-
-/// Run `ssh-keygen -Y sign` over `bytes`.
-///
-/// Signing happens on a staged copy in a private temp dir, because
-/// `ssh-keygen -Y sign` writes `<file>.sig` next to its input and stops to
-/// ask before overwriting an existing one.
-fn sign_with_ssh_keygen(bytes: &[u8], signing_key: &Path) -> Result<String> {
+/// Run `ssh-keygen -Y sign` over `bytes` and return the PEM-armored sshsig.
+pub fn sign_bytes(bytes: &[u8], signing_key: &Path) -> Result<String> {
     let dir = tempfile::tempdir().context("create signing staging dir")?;
     let staged = dir.path().join("config.yaml");
     std::fs::write(&staged, bytes).context("stage config for signing")?;
@@ -128,63 +70,6 @@ fn sign_with_ssh_keygen(bytes: &[u8], signing_key: &Path) -> Result<String> {
         bail!("ssh-keygen -Y sign failed ({status})");
     }
     std::fs::read_to_string(sig_path(&staged)).context("read signature produced by ssh-keygen")
-}
-
-/// Sign with the Secure Enclave key labelled `label` and self-check the
-/// result against the key's own public half before handing it out, so a
-/// framework/encoding mismatch surfaces here as an error rather than as a
-/// daemon that silently keeps the old policy.
-fn sign_with_secure_enclave(bytes: &[u8], label: &str) -> Result<String> {
-    let key = crate::se::open(label)?;
-    let pubkey = key.public_key_sec1()?;
-    eprintln!("signing policy with Secure Enclave key {label:?} (Touch ID / password prompt)...");
-    let signed_data = SshSig::signed_data(NAMESPACE, HashAlg::Sha512, bytes)
-        .context("build sshsig signed data")?;
-    let der = key.sign_der(&signed_data)?;
-    let pem = sshsig_from_p256_der(&pubkey, &der)?;
-
-    let line = openssh_pubkey_p256(&pubkey, label)?;
-    VerifyKeys::parse(&line)
-        .context("self-check: encode public key")?
-        .verify(bytes, &pem)
-        .context("self-check of the Secure Enclave signature failed")?;
-    Ok(pem)
-}
-
-/// Build an `ecdsa-sha2-nistp256` sshsig from a SEC1 uncompressed public
-/// point (`04 || X || Y`) and a DER-encoded ECDSA signature over
-/// SHA-256 of the sshsig signed-data blob — exactly what
-/// `SecKeyCreateSignature(..., ECDSASignatureMessageX962SHA256, ...)`
-/// returns. Pure, so it is unit-tested on every platform.
-pub fn sshsig_from_p256_der(pubkey_sec1: &[u8], der_sig: &[u8]) -> Result<String> {
-    let key_data = p256_key_data(pubkey_sec1)?;
-    let p256_sig = p256::ecdsa::Signature::from_der(der_sig)
-        .map_err(|e| anyhow::anyhow!("Secure Enclave returned a malformed DER signature: {e}"))?;
-    let signature = ssh_key::Signature::try_from(&p256_sig).context("encode ECDSA signature")?;
-    let sig =
-        SshSig::new(key_data, NAMESPACE, HashAlg::Sha512, signature).context("assemble sshsig")?;
-    sig.to_pem(ssh_key::LineEnding::LF)
-        .context("PEM-encode sshsig")
-}
-
-/// The OpenSSH `ecdsa-sha2-nistp256 AAAA... <comment>` line for a SEC1
-/// public point; this is what goes into the daemon's `--verify-key` file.
-pub fn openssh_pubkey_p256(pubkey_sec1: &[u8], comment: &str) -> Result<String> {
-    PublicKey::new(p256_key_data(pubkey_sec1)?, comment)
-        .to_openssh()
-        .context("encode OpenSSH public key")
-}
-
-fn p256_key_data(pubkey_sec1: &[u8]) -> Result<KeyData> {
-    if pubkey_sec1.len() != 65 || pubkey_sec1[0] != 0x04 {
-        bail!(
-            "public key is not an uncompressed SEC1 P-256 point ({} bytes)",
-            pubkey_sec1.len()
-        );
-    }
-    let key = EcdsaPublicKey::from_sec1_bytes(pubkey_sec1)
-        .map_err(|e| anyhow::anyhow!("public key is not a SEC1 P-256 point: {e}"))?;
-    Ok(KeyData::Ecdsa(key))
 }
 
 /// Atomically place `pem` at `out` (write a sibling temp file, then rename).
@@ -277,7 +162,6 @@ fn split_revision_line(line: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p256::ecdsa::signature::Signer as _;
 
     #[test]
     fn sig_path_appends_suffix() {
@@ -285,81 +169,6 @@ mod tests {
             sig_path(Path::new("/x/config.yaml")),
             PathBuf::from("/x/config.yaml.sig")
         );
-    }
-
-    #[test]
-    fn signing_key_parse_selects_backend() {
-        assert_eq!(
-            SigningKey::parse("~/.ssh/acb_policy"),
-            SigningKey::SshKeygen(PathBuf::from("~/.ssh/acb_policy"))
-        );
-        assert_eq!(
-            SigningKey::parse("secure-enclave"),
-            SigningKey::SecureEnclave {
-                label: crate::se::DEFAULT_LABEL.into()
-            }
-        );
-        assert_eq!(
-            SigningKey::parse("secure-enclave:work"),
-            SigningKey::SecureEnclave {
-                label: "work".into()
-            }
-        );
-        assert_eq!(
-            SigningKey::parse("secure-enclave:"),
-            SigningKey::SecureEnclave {
-                label: crate::se::DEFAULT_LABEL.into()
-            }
-        );
-        // A file that merely *contains* the word stays a path.
-        assert_eq!(
-            SigningKey::parse("keys/secure-enclave.pub"),
-            SigningKey::SshKeygen(PathBuf::from("keys/secure-enclave.pub"))
-        );
-    }
-
-    /// Model the Secure Enclave with a software P-256 key: what the
-    /// framework hands back is a SEC1 public point and a DER signature over
-    /// SHA-256 of the signed-data blob. The assembled sshsig must verify
-    /// with the daemon's verifier from the OpenSSH line we print.
-    #[test]
-    fn p256_der_signature_becomes_a_verifiable_sshsig() {
-        let sk = p256::ecdsa::SigningKey::random(&mut rand_core::OsRng);
-        let vk = sk.verifying_key();
-        let sec1 = vk.to_encoded_point(false).as_bytes().to_vec();
-        assert_eq!(sec1.len(), 65);
-        assert_eq!(sec1[0], 0x04);
-
-        let policy = b"revision: 3\nrules: []\n";
-        let signed_data = SshSig::signed_data(NAMESPACE, HashAlg::Sha512, policy).unwrap();
-        let der: Vec<u8> = {
-            let sig: p256::ecdsa::Signature = sk.sign(&signed_data);
-            sig.to_der().as_bytes().to_vec()
-        };
-
-        let pem = sshsig_from_p256_der(&sec1, &der).unwrap();
-        assert!(pem.starts_with("-----BEGIN SSH SIGNATURE-----"));
-
-        let line = openssh_pubkey_p256(&sec1, "acb-policy").unwrap();
-        assert!(line.starts_with("ecdsa-sha2-nistp256 "), "{line}");
-        assert!(line.ends_with(" acb-policy"), "{line}");
-
-        let keys = VerifyKeys::parse(&line).unwrap();
-        let who = keys.verify(policy, &pem).unwrap();
-        assert_eq!(who.comment, "acb-policy");
-        assert!(keys.verify(b"revision: 4\nrules: []\n", &pem).is_err());
-    }
-
-    #[test]
-    fn sshsig_assembly_rejects_bad_inputs() {
-        let sk = p256::ecdsa::SigningKey::random(&mut rand_core::OsRng);
-        let sec1 = sk
-            .verifying_key()
-            .to_encoded_point(false)
-            .as_bytes()
-            .to_vec();
-        assert!(sshsig_from_p256_der(&sec1, b"not der").is_err());
-        assert!(openssh_pubkey_p256(&[1, 2, 3], "x").is_err());
     }
 
     #[test]

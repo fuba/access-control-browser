@@ -27,22 +27,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Staging files for `edit-config` / signing; also used by the tests.
 tempfile = "3"
-# sshsig assembly + self-check for the native (Secure Enclave) signing
-# backend; `ssh-keygen` remains the signer for file / agent / FIDO2 keys.
-ssh-key = { version = "0.6", default-features = false, features = ["std", "alloc", "ecdsa", "p256"] }
-# DER -> (r, s) for the ECDSA signature Security.framework returns.
-p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# Secure Enclave key generation / signing (SecKeyCreateRandomKey,
-# SecKeyCreateSignature) with a user-presence access control.
-security-framework = { version = "3", features = ["OSX_10_15"] }
-security-framework-sys = "2"
-core-foundation = "0.10"
 
 [dev-dependencies]
-# Software P-256 key standing in for the Secure Enclave in unit tests.
-rand_core = { version = "0.6", features = ["getrandom"] }
 assert_cmd = "2"
 predicates = "3"
 # For the session-sharing integration test: spawn a real daemon in-process
