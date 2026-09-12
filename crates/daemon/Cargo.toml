@@ -52,7 +52,7 @@ mime_guess = "2"
 reqwest = { workspace = true }
 tempfile = "3"
 pretty_assertions = "1"
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.30"
 
 [[example]]
 name = "ui_drive"
