@@ -21,7 +21,7 @@ const REGEX_DFA_SIZE_LIMIT_BYTES: usize = 256 * 1024;
 #[derive(Debug, Error)]
 pub enum LoadError {
     #[error("yaml parse error: {0}")]
-    Parse(#[from] serde_yaml::Error),
+    Parse(#[from] serde_yml::Error),
 
     #[error("duplicate rule name: {0}")]
     DuplicateRule(String),
@@ -60,7 +60,7 @@ pub fn load_policy_with_base(
     yaml: &str,
     base_dir: Option<&Path>,
 ) -> Result<CompiledPolicy, LoadError> {
-    let raw: PolicyConfig = serde_yaml::from_str(yaml)?;
+    let raw: PolicyConfig = serde_yml::from_str(yaml)?;
     let mut compiled = compile(raw, etag_of(yaml))?;
     if let Some(base) = base_dir {
         compiled.server.log_file = resolve_relative(&compiled.server.log_file, base);
