@@ -46,7 +46,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite",
@@ -69,7 +69,7 @@ dependencies = [
  "serde",
  "serde_yml",
  "sha2 0.10.9",
- "thiserror 1.0.69",
+ "thiserror 2.0.20",
  "url",
 ]
 
