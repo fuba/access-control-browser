@@ -52,7 +52,7 @@ chromiumoxide = "0.9"
 
 # Misc daemon utilities
 arc-swap = "1.7"
-rand = "0.8"
+rand = "0.10"
 base64 = "0.22"
 sha2 = "0.10"
 notify = "6.1"
