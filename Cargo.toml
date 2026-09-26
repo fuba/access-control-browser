@@ -56,7 +56,7 @@ rand = "0.8"
 base64 = "0.22"
 sha2 = "0.10"
 notify = "6.1"
-notify-debouncer-full = "0.3"
+notify-debouncer-full = "0.7"
 
 [profile.release]
 lto = "thin"
