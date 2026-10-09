@@ -54,7 +54,7 @@ chromiumoxide = "0.9"
 arc-swap = "1.7"
 rand = "0.8"
 base64 = "0.22"
-sha2 = "0.10"
+sha2 = "0.11"
 notify = "6.1"
 notify-debouncer-full = "0.3"
 
