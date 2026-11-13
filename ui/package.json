@@ -10,12 +10,12 @@
   },
   "dependencies": {
     "next": "^16.4.0",
-    "react": "^19.0.0",
+    "react": "^19.3.1",
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
     "@types/node": "26.6.4",
-    "@types/react": "19.0.2",
+    "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "typescript": "5.7.2"
   }
